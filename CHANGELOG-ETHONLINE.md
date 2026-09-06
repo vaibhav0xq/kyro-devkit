@@ -1,0 +1,52 @@
+# ETHOnline 2026 changelog
+
+ETHGlobal judges only event-window work. This file separates what existed
+before the hacking window opened from what was built inside it, so nothing
+pre-existing is presented as new.
+
+Tracks: Arc, Launch on Arc Testnet and Push to Mainnet (primary). Arc, Best
+Agentic Economy with Circle Agent Stack (secondary, same open-source
+artifact).
+
+## Pre-existing before 4 September 2026 (disclosed, not judged)
+
+- Kyro live on Arc Testnet at https://www.thekyro.co: wallet check, claimed
+  identities with usernames, verified attestations, trust graph, public
+  directory, developer page and docs site at https://docs.thekyro.co.
+- Frozen public API v1 with 10 operations, anonymous tier, keyed
+  tier, versioned envelope, published OpenAPI 3.1 spec.
+- Scoring model `identity_score_v1` and decision model `decision_v0.4.1`
+  (allow / caution / block with advisory USDC limits for payment, escrow,
+  lending and marketplace), batch screening, immutable decision receipts,
+  on-demand intake.
+- TypeScript SDK `@kyrodev/sdk` 0.1.0 drafted inside the private repository
+  with tests and a dual-format build. Not published to npm, not public.
+- Dual-chain machinery for an Arc mainnet activation built and dormant behind
+  configuration, testnet primary.
+- 32 claimed identities on the public directory (count taken 6 September 2026).
+- Public build log on the Arc community hub since 26 August 2026
+  ("Kyro: Trust before your funds move", then "Kyro build log #2" onward).
+
+Source: the private product repository, not part of this submission.
+
+## Event window, 4 to 16 September 2026 (judged)
+
+- 2026-09-06: Public devkit repository scaffolded (this repository). SDK
+  extracted from the private repository into `packages/sdk` with its tests,
+  spec check and build intact; public OpenAPI snapshot vendored at
+  `spec/kyro-openapi.yaml` with provenance; judge quickstart README; curl,
+  Python and TypeScript examples verified against the live API; API one-pager
+  and architecture outline; CI workflow.
+
+## Planned inside the window (not yet done, listed so the plan is public)
+
+- Agent gate demo: a Circle Agent Stack starter kit with the Kyro decision
+  wired into the payment approval path on Arc Testnet.
+- First npm release of `@kyrodev/sdk`.
+- Architecture diagram export and two submission slides.
+- Demo video.
+- Arc mainnet activation on 16 September 2026 with evidence links (live URL
+  serving Arc mainnet and the first verified mainnet attestation
+  transaction). Arc accepts mainnet evidence until 30 September 2026.
+
+Entries move from this section to the dated list above only when they ship.

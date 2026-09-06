@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+.DS_Store
+
+# Local configuration. Only .env.example files are committed.
+.env
+.env.*
+!.env.example
+__pycache__/

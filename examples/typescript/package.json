@@ -1,0 +1,23 @@
+{
+  "name": "@kyro-devkit/quickstart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runnable @kyrodev/sdk quickstart: check a wallet, gate a USDC amount on the verdict and the advisory limit.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "start": "tsx quickstart.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kyrodev/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.6.3"
+  }
+}
