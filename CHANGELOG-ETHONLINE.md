@@ -19,8 +19,10 @@ artifact).
   (allow / caution / block with advisory USDC limits for payment, escrow,
   lending and marketplace), batch screening, immutable decision receipts,
   on-demand intake.
-- TypeScript SDK `@kyrodev/sdk` 0.1.0 drafted inside the private repository
-  with tests and a dual-format build. Not published to npm, not public.
+- TypeScript SDK `@kyrodev/sdk` 0.1.0 written inside the private repository
+  with tests and a dual-format build, published to npm on 25 August 2026
+  (https://www.npmjs.com/package/@kyrodev/sdk). The source was not public
+  before this repository.
 - Dual-chain machinery for an Arc mainnet activation built and dormant behind
   configuration, testnet primary.
 - 32 claimed identities on the public directory (count taken 6 September 2026).
@@ -37,12 +39,17 @@ Source: the private product repository, not part of this submission.
   `spec/kyro-openapi.yaml` with provenance; judge quickstart README; curl,
   Python and TypeScript examples verified against the live API; API one-pager
   and architecture outline; CI workflow.
+- 2026-09-06: Correction. An earlier revision of this file and the READMEs
+  said `@kyrodev/sdk` was not on npm. It had been published as 0.1.0 on
+  25 August 2026, before the window, so the npm release is pre-existing work
+  and is not claimed here. The published runtime is byte-identical to this
+  repository's build; its type declarations predate the additive interaction
+  graph native value fields.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 
 - Agent gate demo: a Circle Agent Stack starter kit with the Kyro decision
   wired into the payment approval path on Arc Testnet.
-- First npm release of `@kyrodev/sdk`.
 - Architecture diagram export and two submission slides.
 - Demo video.
 - Arc mainnet activation on 16 September 2026 with evidence links (live URL

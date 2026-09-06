@@ -10,9 +10,17 @@ or newer, any runtime with a WHATWG `fetch`.
 
 ```sh
 npm install @kyrodev/sdk
+# or
+pnpm add @kyrodev/sdk
 ```
 
-Until the first npm release lands, build from source: clone
+Published version: 0.1.0 (MIT, Node 18.17 or newer, zero runtime dependencies).
+Its runtime code is byte-identical to the build this directory produces. The
+published 0.1.0 type declarations predate the additive interaction graph native
+value fields (`metrics.value`, `capabilities.value`); the declarations built
+from this directory include them.
+
+To build from source instead, clone
 [kyro-devkit](https://github.com/vaibhav0xq/kyro-devkit), run `pnpm install`
 and `pnpm build`, then depend on `packages/sdk` through your package manager's
 workspace or link feature.

@@ -92,8 +92,21 @@ if (decision.decision === "allow" && amountUsdc <= decision.recommendedLimit.amo
 }
 ```
 
-`npm install @kyrodev/sdk` once the first release is on npm (scheduled inside
-the event window). Until then, build from this repository:
+Install the published package, `@kyrodev/sdk` 0.1.0 on npm (MIT, Node 18.17
+or newer, zero runtime dependencies):
+
+```sh
+npm install @kyrodev/sdk
+# or
+pnpm add @kyrodev/sdk
+```
+
+The runtime code on npm is byte-identical to the build this repository
+produces. The published 0.1.0 type declarations predate the additive
+interaction graph native value fields (`metrics.value`, `capabilities.value`);
+the declarations built from this repository include them.
+
+To work on the SDK or run the examples from source:
 
 ```sh
 pnpm install       # Node 20 or newer for the toolchain; the built SDK runs on Node 18.17+
@@ -155,6 +168,7 @@ pre-existing work and event-window work lives in
 ## Links
 
 - Live app: https://www.thekyro.co
+- npm package: https://www.npmjs.com/package/@kyrodev/sdk
 - Wallet check: https://www.thekyro.co/check
 - Developer page: https://www.thekyro.co/developers
 - Docs: https://docs.thekyro.co

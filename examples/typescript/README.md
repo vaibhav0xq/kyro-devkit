@@ -16,6 +16,7 @@ Exit codes: 0 proceed, 2 hold (caution or over the advisory limit), 3 block,
 1 request failure. That makes the script usable as a step in a shell pipeline
 or a CI gate.
 
-Once `@kyrodev/sdk` is on npm the same file works outside this repository:
-replace the workspace dependency with the published version and run it with
-`tsx quickstart.ts`.
+The same file works outside this repository against the published package:
+in a project with `"type": "module"`, run `npm install @kyrodev/sdk tsx` (or
+`pnpm add @kyrodev/sdk tsx`), copy `quickstart.ts` in and run
+`npx tsx quickstart.ts`.
