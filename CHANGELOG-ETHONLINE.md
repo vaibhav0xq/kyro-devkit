@@ -57,6 +57,16 @@ Source: the private product repository, not part of this submission.
   the command builder, the gateway, the audit-backed duplicate guard and the
   CLI; they run inside `pnpm run verify`. No live transfer, no receipts and
   no model planner yet; `--mode live` exits with a message.
+- 2026-09-07: Architecture diagram exported to `docs/architecture.png`
+  (1920x1080) and `docs/architecture@2x.png` (3840x2160). One board, six
+  lanes: callers, public surface, engines, evidence, chains and execution
+  with the caller's keys, separated by a custody boundary that no Kyro
+  component crosses. The agent path from `demos/agent-gate` runs along the
+  bottom as caller-side code. Every figure on the board (rate budget,
+  operation count, receipt hashing and dedupe, agent gate caps and timeout,
+  chain list, model versions) was checked against this repository before
+  export. `docs/ARCHITECTURE.md` now embeds the board instead of announcing
+  it. Arc Testnet only; Kyro stays advisory and non-custodial.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 

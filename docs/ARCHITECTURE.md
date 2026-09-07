@@ -5,9 +5,14 @@ case; Kyro answers allow / caution / block, an advisory USDC limit and,
 optionally, an immutable receipt. Nothing custodial sits in the path: Kyro
 never holds keys or funds and the caller keeps the final say.
 
-This page is the text outline of the diagram. The rendered board
-(`docs/architecture.png`) is produced from the Kyro presentation system and
-lands here when it is exported.
+![Kyro on Arc: architecture. Six lanes from callers to execution with a custody boundary that no Kyro component crosses.](./architecture.png)
+
+The board is committed as `docs/architecture.png` (1920x1080) and
+`docs/architecture@2x.png` (3840x2160, for print and zoom). Graphite plates
+are the parts Kyro runs; paper cards are callers, wallets and chains. Nothing
+Kyro runs has an arrow across the custody boundary. The bottom band walks the
+agent path from `demos/agent-gate` as caller-side code. The outline below is
+the same structure in text.
 
 ```mermaid
 flowchart LR
