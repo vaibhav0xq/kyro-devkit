@@ -8,6 +8,22 @@ importers:
 
   .: {}
 
+  demos/agent-gate:
+    dependencies:
+      '@kyrodev/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.4.1
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   examples/typescript:
     dependencies:
       '@kyrodev/sdk':

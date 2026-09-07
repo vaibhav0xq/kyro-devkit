@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - examples/typescript
+  - demos/*
 
 # esbuild ships a postinstall that only validates its binary; allow it so installs stay warning-free.
 onlyBuiltDependencies:

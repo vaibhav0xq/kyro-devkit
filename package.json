@@ -21,7 +21,10 @@
     "test:dist": "pnpm --filter @kyrodev/sdk run test:dist",
     "check:generated": "pnpm --filter @kyrodev/sdk run check:generated",
     "typecheck:examples": "pnpm --filter @kyro-devkit/quickstart run typecheck",
-    "verify": "pnpm run check:generated && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:dist && pnpm run typecheck:examples",
-    "quickstart": "pnpm --filter @kyro-devkit/quickstart run start"
+    "typecheck:demos": "pnpm --filter @kyro-devkit/agent-gate run typecheck",
+    "test:demos": "pnpm --filter @kyro-devkit/agent-gate run test",
+    "verify": "pnpm run check:generated && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:dist && pnpm run typecheck:examples && pnpm run typecheck:demos && pnpm run test:demos",
+    "quickstart": "pnpm --filter @kyro-devkit/quickstart run start",
+    "agent-gate": "pnpm --filter @kyro-devkit/agent-gate run start"
   }
 }

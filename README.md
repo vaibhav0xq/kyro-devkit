@@ -129,6 +129,28 @@ rate-limit metadata and zero runtime dependencies. Details in
   [`spec/README.md`](./spec/README.md).
 - [`docs/API.md`](./docs/API.md): the whole API on one page.
 
+## Agent gate demo
+
+[`demos/agent-gate`](./demos/agent-gate/README.md) is a small agent that pays
+USDC invoices on Arc Testnet through the Circle CLI, with Kyro in the approval
+path. A scripted planner proposes each payment, the gate reads the Kyro
+decision anonymously, an operator policy turns the verdict into proceed, hold
+or refuse and every step lands in an audit log. Kyro never moves funds and
+never blocks a transaction; the agent's own policy does.
+
+```bash
+pnpm install
+pnpm run build
+pnpm agent-gate
+```
+
+No credentials are needed. This revision is dry-run only: for a proceed it
+prints the exact Circle CLI command it would run and executes nothing. The
+task file ships three scenes, a claimed identity inside every limit, a wallet
+Kyro has never indexed and an amount above the advisory limit. Run
+`pnpm agent-gate -- --simulate timeout` to watch the gate fail closed when
+Kyro cannot answer.
+
 ## How Kyro decides
 
 - **Score** `identity_score_v1`: 0 to 100 from indexed evidence, with a
@@ -154,6 +176,7 @@ spec/                 OpenAPI 3.1 snapshot of the public contract
 examples/curl         copy-paste calls and kyro.sh
 examples/python       stdlib quickstart
 examples/typescript   SDK quickstart wired to the workspace build
+demos/agent-gate      Circle CLI agent with Kyro in the payment approval path
 docs/                 API one-pager, architecture outline
 CHANGELOG-ETHONLINE.md   pre-existing work versus event-window work
 ```

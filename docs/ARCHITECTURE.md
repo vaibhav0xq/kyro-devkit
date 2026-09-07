@@ -59,7 +59,9 @@ flowchart LR
 **Consumers.** Three kinds of caller use the same API: people through the web
 app (check a wallet, claim an identity, submit attestations), protocols and
 applications through the SDK or raw HTTP and agents that call Kyro
-immediately before a transfer and act on the verdict.
+immediately before a transfer and act on the verdict. The agent case is
+worked through in `demos/agent-gate`, where an operator policy turns the
+verdict into proceed, hold or refuse ahead of a Circle CLI transfer.
 
 **Public surface.** `www.thekyro.co` is a Next.js App Router application.
 `/api/v1` exposes 10 operations behind a versioned JSON envelope.

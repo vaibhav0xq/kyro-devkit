@@ -1,0 +1,29 @@
+{
+  "chain": "ARC-TESTNET",
+  "notes": [
+    "Three scenes for the dry-run. Amounts are testnet USDC and nothing is submitted in this revision.",
+    "inv-001: a claimed identity with committed evidence, inside the advisory limit and the operator caps. Expected: allow verdict, policy proceeds.",
+    "inv-002: a wallet Kyro has never indexed. Expected: caution baseline with freshness indexing_required, policy holds. Replace the recipient with a second agent wallet you control before any live run.",
+    "inv-003: the same identity as inv-001 with an amount above the advisory limit and the operator cap. Expected: allow verdict, policy holds."
+  ],
+  "invoices": [
+    {
+      "id": "inv-001",
+      "to": "0xbb30481982786ea53fe1856e0745eec814d83252",
+      "amountUsdc": 1.5,
+      "memo": "design retainer, September"
+    },
+    {
+      "id": "inv-002",
+      "to": "0x000000000000000000000000000000000000dead",
+      "amountUsdc": 2,
+      "memo": "new supplier, first invoice"
+    },
+    {
+      "id": "inv-003",
+      "to": "0xbb30481982786ea53fe1856e0745eec814d83252",
+      "amountUsdc": 1200,
+      "memo": "hardware order"
+    }
+  ]
+}

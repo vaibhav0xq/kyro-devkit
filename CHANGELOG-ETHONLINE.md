@@ -45,11 +45,24 @@ Source: the private product repository, not part of this submission.
   and is not claimed here. The published runtime is byte-identical to this
   repository's build; its type declarations predate the additive interaction
   graph native value fields.
+- 2026-09-07: Agent gate demo, dry-run slice, at `demos/agent-gate`. A
+  scripted planner proposes USDC invoices on Arc Testnet; each proposal goes
+  through a pre-screen, an anonymous Kyro decision read through
+  `@kyrodev/sdk`, an operator policy (proceed, hold or refuse with every
+  triggered condition named), an optional human approval of a capped amount
+  and a JSONL audit log. The executor builds the exact Circle CLI transfer
+  command and prints it without running it. Failures to reach Kyro (timeout,
+  rate limit, server error, malformed answer) refuse the payment, with
+  `--simulate` to reproduce each offline. Tests cover policy precedence,
+  the command builder, the gateway, the audit-backed duplicate guard and the
+  CLI; they run inside `pnpm run verify`. No live transfer, no receipts and
+  no model planner yet; `--mode live` exits with a message.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 
-- Agent gate demo: a Circle Agent Stack starter kit with the Kyro decision
-  wired into the payment approval path on Arc Testnet.
+- Agent gate demo, live slice: the same gate executing real Arc Testnet
+  transfers from a fresh agent through the Circle CLI and Agent Wallets,
+  decision receipts for the recorded take and the recorded take itself.
 - Architecture diagram export and two submission slides.
 - Demo video.
 - Arc mainnet activation on 16 September 2026 with evidence links (live URL
