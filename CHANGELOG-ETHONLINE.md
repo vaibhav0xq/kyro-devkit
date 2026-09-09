@@ -89,8 +89,9 @@ Source: the private product repository, not part of this submission.
   Dry-run output is unchanged. Tests cover the success and failure
   envelopes, timeout as unknown, key placement and reuse, the no-retry
   rule and the timeout kill, against fixtures and a stand-in CLI script;
-  nothing in the suite reaches Circle. No live transfer has been run
-  through the gate yet; the first one is the recorded take below.
+  nothing in the suite reaches Circle. No live transfer had been run
+  through the gate at this point; the first one is the last entry of this
+  list.
 - 2026-09-09: Agent gate demo, Windows spawn fix at `demos/agent-gate`. The
   first live attempt on Windows failed before the Circle CLI started:
   `CIRCLE_BIN` pointed at `circle.cmd`, the batch shim a global npm install
@@ -103,13 +104,24 @@ Source: the private product repository, not part of this submission.
   else is spawned directly as before. Still one process start per proceed,
   same idempotency key, same audit argv; the `EINVAL` and `ENOENT` details on
   Windows now name the `circle.cmd` path to use. Tests drive the executor
-  through a recording spawn on every OS. No live transfer has been run yet.
+  through a recording spawn on every OS. No live transfer had been run at
+  this point.
+- 2026-09-09: First live transfer through the gate, on Arc Testnet. The same
+  day, after the spawn fix, `--mode live --only inv-001` on Windows paid
+  1.5 USDC to the inv-001 recipient through the Circle CLI. The CLI reported
+  state `COMPLETE` and transaction
+  `0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873`
+  (https://testnet.arcscan.app/tx/0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873).
+  One spawn with the run's own idempotency key, nothing retried; the audit
+  log holds the intent and result lines. inv-002 and inv-003 were not run
+  live. No code change: this file, the status paragraph of
+  `demos/agent-gate/README.md` and one sentence of the root README are the
+  only edits.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 
-- Agent gate demo, recorded take: the first real Arc Testnet transfers from
-  a fresh agent wallet through `--mode live` and the Circle CLI, with
-  decision receipts, recorded end to end.
+- Agent gate demo, next steps: decision receipts inside the run and a
+  model-driven planner. The first live transfer is in the dated list above.
 - Architecture diagram export and two submission slides.
 - Demo video.
 - Arc mainnet activation on 16 September 2026 with evidence links (live URL

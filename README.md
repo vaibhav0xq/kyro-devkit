@@ -154,7 +154,10 @@ one Circle CLI transfer per proceed from an agent wallet you control, with an
 idempotency key, the CLI's JSON answer read into submitted, failed or unknown
 plus reconcile steps printed after an unknown. It needs a Circle CLI testnet
 agent session and `AGENT_WALLET_ADDRESS`; the demo README walks through it.
-No live transfer has been run through the gate yet.
+The first live transfer through the gate ran on 9 September 2026 on Arc
+Testnet: 1.5 USDC, state `COMPLETE`, transaction
+`0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873`;
+`CHANGELOG-ETHONLINE.md` has the entry.
 
 ## How Kyro decides
 

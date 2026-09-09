@@ -19,12 +19,16 @@ executor builds the exact Circle CLI command and prints it without running it.
 once per proceed with an idempotency key, then reports what the CLI answered.
 Everything before the executor is the same code in both modes.
 
-**Status: no live transfer has been run yet.** The live path is complete and
-tested against the CLI's documented output contract with a stand-in binary,
-not against Circle. The first real Arc Testnet transfer through this gate is
-the recorded take listed under Planned in
-[`CHANGELOG-ETHONLINE.md`](../../CHANGELOG-ETHONLINE.md), together with
-decision receipts and a model-driven planner.
+**Status: the first live transfer through this gate ran on 9 September 2026
+on Arc Testnet.** `--mode live --only inv-001` on Windows paid 1.5 USDC to the
+inv-001 recipient through the Circle CLI, which reported state `COMPLETE` and
+transaction
+`0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873`
+([explorer](https://testnet.arcscan.app/tx/0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873)).
+One spawn with the run's own idempotency key, nothing retried; inv-002 and
+inv-003 have not been run live. The test suite still uses a stand-in binary
+and never reaches Circle. Decision receipts and a model-driven planner remain
+planned, see [`CHANGELOG-ETHONLINE.md`](../../CHANGELOG-ETHONLINE.md).
 
 ## Run it
 
