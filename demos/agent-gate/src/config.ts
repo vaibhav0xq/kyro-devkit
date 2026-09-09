@@ -1,7 +1,8 @@
 /**
  * Flags and environment. Flags win over environment variables, which win
- * over defaults. Dry-run is the default and needs nothing. This revision has
- * no live mode: asking for it is a configuration error, not a silent fallback.
+ * over defaults. Dry-run is the default and needs nothing. Live mode needs
+ * the paying agent wallet up front and refuses simulated failures: a live
+ * run either has what it needs before the first read or it does not start.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -23,6 +24,8 @@ export const DEFAULTS = {
   maxUsdcPerRun: 10,
   timeoutMs: 8000,
   minIntervalMs: 1500,
+  /** The CLI itself gives up after about 180 s of polling; leave it room to answer. */
+  circleTimeoutMs: 240_000,
 };
 
 export const SIMULATION_KINDS: readonly SimulationKind[] = ["timeout", "rate_limit", "server_error"];
@@ -44,6 +47,8 @@ export interface Config {
   simulate: SimulationKind | undefined;
   agentWallet: string | undefined;
   circleBin: string;
+  /** Live only: how long one Circle CLI spawn may take before it is stopped and reported unknown. */
+  circleTimeoutMs: number;
   caps: Caps;
   timeoutMs: number;
   minIntervalMs: number;
@@ -54,14 +59,16 @@ export const USAGE = `Usage: pnpm agent-gate [-- flags]
 
   --tasks <file>        task file, relative to the current directory (default ${DEFAULTS.tasksFile} in demos/agent-gate)
   --only <invoiceId>    run a single invoice from the task file
-  --mode <dry-run>      dry-run is the only mode in this revision
-  --simulate <kind>     timeout | rate_limit | server_error: no request reaches Kyro, labelled SIMULATED
+  --mode <dry-run|live> dry-run (default) prints the Circle CLI command and runs nothing;
+                        live spawns it for every proceed and needs AGENT_WALLET_ADDRESS plus
+                        a Circle CLI testnet agent session on this machine
+  --simulate <kind>     timeout | rate_limit | server_error: no request reaches Kyro, labelled SIMULATED (dry-run only)
   --interactive         on a hold, ask a human to approve the capped alternative (TTY only)
   --help                this text
 
 Environment (a .env file next to this package is read, existing variables win):
-  AGENT_GATE_MODE, AGENT_WALLET_ADDRESS, CIRCLE_BIN, MAX_USDC_PER_TRANSFER, MAX_USDC_PER_RUN,
-  KYRO_TIMEOUT_MS, KYRO_MIN_INTERVAL_MS, AGENT_GATE_INTERACTIVE, AGENT_GATE_AUDIT_LOG`;
+  AGENT_GATE_MODE, AGENT_WALLET_ADDRESS, CIRCLE_BIN, CIRCLE_TIMEOUT_MS, MAX_USDC_PER_TRANSFER,
+  MAX_USDC_PER_RUN, KYRO_TIMEOUT_MS, KYRO_MIN_INTERVAL_MS, AGENT_GATE_INTERACTIVE, AGENT_GATE_AUDIT_LOG`;
 
 const VALUE_FLAGS = new Set(["tasks", "mode", "only", "simulate"]);
 const BOOLEAN_FLAGS = new Set(["interactive", "help"]);
@@ -176,13 +183,8 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
   }
   const simulate: SimulationKind | undefined = simulateRaw;
 
-  if (mode === "live") {
-    if (simulate !== undefined) {
-      throw new ConfigError("--simulate is refused in live mode; simulated failures are for dry-run only");
-    }
-    throw new ConfigError(
-      "live mode is not available in this revision. The demo runs dry-run only: it reads Kyro, applies the operator policy and prints the Circle CLI command it would run without executing it.",
-    );
+  if (mode === "live" && simulate !== undefined) {
+    throw new ConfigError("--simulate is refused in live mode; simulated failures are for dry-run only");
   }
 
   const walletRaw = env.AGENT_WALLET_ADDRESS?.trim();
@@ -193,6 +195,11 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
     }
     agentWallet = walletRaw.toLowerCase();
   }
+  if (mode === "live" && agentWallet === undefined) {
+    throw new ConfigError(
+      "live mode needs AGENT_WALLET_ADDRESS, the paying agent wallet on ARC-TESTNET (circle wallet list --chain ARC-TESTNET --type agent). Nothing was read or spawned.",
+    );
+  }
 
   const maxUsdcPerTransfer = readNumber(env, "MAX_USDC_PER_TRANSFER", DEFAULTS.maxUsdcPerTransfer, 0.000001);
   const maxUsdcPerRun = readNumber(env, "MAX_USDC_PER_RUN", DEFAULTS.maxUsdcPerRun, 0.000001);
@@ -201,6 +208,7 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
   }
 
   const circleBin = env.CIRCLE_BIN?.trim() || DEFAULTS.circleBin;
+  const circleTimeoutMs = readNumber(env, "CIRCLE_TIMEOUT_MS", DEFAULTS.circleTimeoutMs, 1000);
 
   return {
     mode,
@@ -210,6 +218,7 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
     simulate,
     agentWallet,
     circleBin,
+    circleTimeoutMs,
     caps: { maxUsdcPerTransfer, maxUsdcPerRun },
     timeoutMs: readNumber(env, "KYRO_TIMEOUT_MS", DEFAULTS.timeoutMs, 1),
     minIntervalMs: readNumber(env, "KYRO_MIN_INTERVAL_MS", DEFAULTS.minIntervalMs, 0),

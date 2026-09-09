@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { createAuditLog } from "../src/audit";
 import type { AuditEntry, AuditIntent, AuditResult } from "../src/audit";
 import { FROM_PLACEHOLDER } from "../src/circle";
-import { runGate } from "../src/gate";
+import { GateInterruptedError, runGate } from "../src/gate";
 import type { GateDeps } from "../src/gate";
 import { createKyroGateway } from "../src/kyro";
 import type { KyroGateway } from "../src/kyro";
@@ -12,9 +12,11 @@ import type { Caps, Proposal } from "../src/types";
 import {
   AGENT,
   BUILDER,
+  CIRCLE_TX_ID,
   FIXED_NOW,
   FRESH,
   OTHER,
+  TX_HASH,
   baselinePayload,
   collectOut,
   decisionPayload,
@@ -328,5 +330,292 @@ describe("gate: human approval on a hold", () => {
     assert.equal(run.outcomes[1]?.policy.cappedAmountUsdc, undefined);
     assert.equal(questions.length, 0);
     assert.match(h.out.text(), /no capped alternative is available/);
+  });
+});
+
+/**
+ * Live mode with a recording executor standing in for the Circle CLI. The
+ * executor answers with canned results, so the gate's own live behaviour
+ * (key handling, audit lines, output, counts) is checked without a session.
+ */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const KEY_A = "3f2a9c1e-7b4d-4e58-9a0f-2c6d8e1b5a73";
+const RECONCILE = `circle transaction list --address ${AGENT} --chain ARC-TESTNET --operation transfer --tx-type outbound --output json`;
+
+type LiveAnswer = "submitted" | "failed" | "unknown";
+
+function liveResult(answer: LiveAnswer): Parameters<typeof recordingExecutor>[0] {
+  return (request, argv) => {
+    const idempotencyKey = request.idempotencyKey ?? null;
+    if (answer === "submitted") {
+      return { state: "submitted", argv, txHash: TX_HASH, chainState: "CONFIRMED", transactionId: CIRCLE_TX_ID, idempotencyKey };
+    }
+    if (answer === "failed") {
+      return {
+        state: "failed",
+        argv,
+        exitCode: 1,
+        errorCode: "AUTH_REQUIRED",
+        detail: "the Circle CLI stopped before submitting: No agent session for testnet.",
+        idempotencyKey,
+      };
+    }
+    return { state: "unknown", argv, exitCode: 1, errorCode: "TIMEOUT", detail: "Transfer failed or timed out.", idempotencyKey };
+  };
+}
+
+async function liveHarness(
+  answer: LiveAnswer,
+  answers: Parameters<typeof mockFetch>,
+  overrides: Partial<GateDeps> = {},
+): Promise<Harness> {
+  const executor = recordingExecutor(liveResult(answer), "live");
+  const h = await harness(answers, { executor, mode: "live", agentWallet: AGENT, circleTimeoutMs: 240_000, ...overrides });
+  return { ...h, executor };
+}
+
+function priorLiveLines(state: "submitted" | "failed" | "unknown" | null, minutesAgo: number, key = KEY_A): string {
+  const at = new Date(FIXED_NOW.getTime() - minutesAgo * 60_000).toISOString();
+  const intent = JSON.stringify({
+    type: "intent",
+    at,
+    runId: "earlier",
+    mode: "live",
+    invoiceId: "inv-001",
+    to: BUILDER,
+    requestedUsdc: 1.5,
+    approvedUsdc: 1.5,
+    action: "proceed",
+    humanApproved: false,
+    conditions: [],
+    verdict: "allow",
+    advisoryLimitUsdc: 1000,
+    cacheStatus: "cached",
+    decisionModelVersion: "decision_v0.4.1",
+    kyroFailure: null,
+    simulated: false,
+    idempotencyKey: key,
+  });
+  if (state === null) return `${intent}\n`;
+  const result = JSON.stringify({
+    type: "result",
+    at: new Date(FIXED_NOW.getTime() - minutesAgo * 60_000 + 20_000).toISOString(),
+    runId: "earlier",
+    mode: "live",
+    invoiceId: "inv-001",
+    to: BUILDER,
+    amountUsdc: 1.5,
+    state,
+    argv: [],
+    txHash: state === "submitted" ? TX_HASH : null,
+    exitCode: state === "submitted" ? 0 : 1,
+    detail: state === "submitted" ? null : "Transfer failed or timed out.",
+    transactionId: state === "submitted" ? CIRCLE_TX_ID : null,
+    idempotencyKey: key,
+    errorCode: state === "unknown" ? "TIMEOUT" : null,
+  });
+  return `${intent}\n${result}\n`;
+}
+
+describe("gate: live mode", () => {
+  it("passes a fresh idempotency key through the intent line, the request and the argv", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+
+    assert.equal(run.proceeded, 1);
+    assert.equal(run.failed, 0);
+    assert.equal(run.unknown, 0);
+    assert.equal(h.executor.calls.length, 1);
+    const key = h.executor.calls[0]?.idempotencyKey;
+    assert.ok(key !== undefined && UUID_V4.test(key), `expected a UUID v4 key, got ${String(key)}`);
+    assert.equal(h.executor.calls[0]?.from, AGENT);
+
+    const entries = await auditEntries(h.auditPath);
+    assert.equal(intents(entries)[0]?.idempotencyKey, key);
+    assert.equal(intents(entries)[0]?.mode, "live");
+    const written = results(entries)[0];
+    assert.equal(written?.state, "submitted");
+    assert.equal(written?.idempotencyKey, key);
+    assert.equal(written?.txHash, TX_HASH);
+    assert.equal(written?.transactionId, CIRCLE_TX_ID);
+    assert.equal(written?.errorCode, null);
+    assert.equal(written?.argv.join(" "), `wallet transfer ${BUILDER} --amount 1.5 --address ${AGENT} --chain ARC-TESTNET --idempotency-key ${key} --output json`);
+
+    const text = h.out.text();
+    assert.match(text, new RegExp(`executor\\s+circle wallet transfer ${BUILDER} --amount 1.5 --address ${AGENT} --chain ARC-TESTNET --idempotency-key ${key} --output json`));
+    assert.match(text, /waiting for the Circle CLI.*up to 240 s/);
+    assert.match(text, new RegExp(`tx\\s+${TX_HASH} \\(CONFIRMED\\), https://testnet.arcscan.app/tx/${TX_HASH}`));
+    assert.match(text, new RegExp(`circle transaction id ${CIRCLE_TX_ID}, idempotency key ${key}`));
+    assert.match(text, /outcome\s+proceeded\n/);
+    assert.doesNotMatch(text, /dry-run/);
+    assert.doesNotMatch(text, /reusing key/);
+  });
+
+  it("uses a different key for every proceed in a run", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload()), okJson(decisionPayload())]);
+    await runGate(h.deps, [proposal({ invoiceId: "a", amountUsdc: 1 }), proposal({ invoiceId: "b", amountUsdc: 2 })]);
+    const keys = h.executor.calls.map((call) => call.idempotencyKey);
+    assert.equal(keys.length, 2);
+    assert.notEqual(keys[0], keys[1]);
+  });
+
+  it("never attaches a key in dry-run", async () => {
+    const h = await harness([okJson(decisionPayload())], { agentWallet: AGENT });
+    await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal("idempotencyKey" in (h.executor.calls[0] ?? {}), false);
+    const entries = await auditEntries(h.auditPath);
+    assert.equal(intents(entries)[0]?.idempotencyKey, null);
+    assert.doesNotMatch(h.out.text(), /--idempotency-key/);
+  });
+
+  it("reports an unknown answer once, prints the reconcile steps and never spawns again", async () => {
+    const h = await liveHarness("unknown", [okJson(decisionPayload())]);
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(run.outcomes[0]?.execution?.state, "unknown");
+    assert.equal(run.proceeded, 0);
+    assert.equal(run.failed, 0);
+    assert.equal(run.unknown, 1);
+    assert.equal(run.approvedUsdc, 1.5);
+    assert.equal(h.executor.calls.length, 1);
+    assert.equal(h.calls.length, 1);
+
+    const key = h.executor.calls[0]?.idempotencyKey ?? "";
+    const text = h.out.text();
+    assert.match(text, /tx\s+unknown \(TIMEOUT, exit 1\): Transfer failed or timed out\./);
+    assert.match(text, /may still be in flight; reconcile before anything else/);
+    assert.ok(text.includes(RECONCILE), `expected the reconcile command in:\n${text}`);
+    assert.match(text, new RegExp(`match destinationAddress ${BUILDER}, amounts \\["1.5"\\] and createDate after 2026-09-07T10:00:0\\dZ?`));
+    assert.match(text, new RegExp(`https://testnet.arcscan.app/address/${AGENT}`));
+    assert.match(text, new RegExp(`a later run of inv-001 is held for 10 minutes and then reuses idempotency key ${key}`));
+    assert.match(text, /outcome\s+unknown, a transfer may have been submitted/);
+
+    const written = results(await auditEntries(h.auditPath))[0];
+    assert.equal(written?.state, "unknown");
+    assert.equal(written?.errorCode, "TIMEOUT");
+    assert.equal(written?.idempotencyKey, key);
+    assert.equal(written?.txHash, null);
+  });
+
+  it("reports a failed answer as nothing paid and counts it separately", async () => {
+    const h = await liveHarness("failed", [okJson(decisionPayload())]);
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.proceeded, 0);
+    assert.equal(run.failed, 1);
+    assert.equal(run.unknown, 0);
+    assert.equal(h.executor.calls.length, 1);
+    const text = h.out.text();
+    assert.match(text, /tx\s+failed \(AUTH_REQUIRED, exit 1\): the Circle CLI stopped before submitting/);
+    assert.match(text, /nothing was paid; fix the cause and run again, the next attempt gets a new idempotency key/);
+    assert.match(text, /outcome\s+failed, nothing was paid/);
+    assert.doesNotMatch(text, /circle transaction list/);
+    const written = results(await auditEntries(h.auditPath))[0];
+    assert.equal(written?.state, "failed");
+    assert.equal(written?.errorCode, "AUTH_REQUIRED");
+  });
+
+  it("holds a repeat of an unknown or interrupted live payment inside the duplicate window", async () => {
+    for (const prior of [priorLiveLines("unknown", 3), priorLiveLines(null, 3), priorLiveLines("submitted", 3), priorLiveLines("failed", 3)]) {
+      const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+      await writeFile(h.auditPath, prior);
+      const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+      assert.equal(run.outcomes[0]?.action, "hold");
+      assert.deepEqual(run.outcomes[0]?.policy.conditions.map((c) => c.code), ["DUPLICATE_RECENT"]);
+      assert.equal(h.executor.calls.length, 0);
+    }
+  });
+
+  it("reuses the earlier key only when the last live attempt ended unknown or never reported", async () => {
+    for (const [prior, expectReuse, endedAt] of [
+      [priorLiveLines("unknown", 30), true, "2026-09-07T09:30:20.000Z"],
+      [priorLiveLines(null, 30), true, "2026-09-07T09:30:00.000Z"],
+      [priorLiveLines("submitted", 30), false, ""],
+      [priorLiveLines("failed", 30), false, ""],
+    ] as const) {
+      const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+      await writeFile(h.auditPath, prior);
+      const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+      assert.equal(run.outcomes[0]?.action, "proceed");
+      assert.equal(h.executor.calls.length, 1);
+      const key = h.executor.calls[0]?.idempotencyKey;
+      if (expectReuse) {
+        assert.equal(key, KEY_A);
+        assert.match(h.out.text(), new RegExp(`idempotency\\s+reusing key ${KEY_A} from the attempt at ${endedAt} that ended unknown`));
+      } else {
+        assert.notEqual(key, KEY_A);
+        assert.ok(key !== undefined && UUID_V4.test(key));
+        assert.doesNotMatch(h.out.text(), /reusing key/);
+      }
+      const entries = await auditEntries(h.auditPath);
+      assert.equal(intents(entries).at(-1)?.idempotencyKey, key);
+    }
+  });
+
+  it("starts the reconcile window at the intent that first sent a reused key", async () => {
+    const h = await liveHarness("unknown", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", 30));
+    await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(h.executor.calls[0]?.idempotencyKey, KEY_A);
+    // The earlier intent was written at 09:30:00; this run's intent is at 10:00:00.
+    assert.match(h.out.text(), /createDate after 2026-09-07T09:30:00\.000Z/);
+    assert.doesNotMatch(h.out.text(), /createDate after 2026-09-07T10:00/);
+  });
+
+  it("surfaces an unknown as GateInterruptedError when the run dies before the result line is written", async () => {
+    const h = await liveHarness("unknown", [okJson(decisionPayload())]);
+    const audit = h.deps.audit;
+    h.deps.audit = {
+      ...audit,
+      async append(entry) {
+        if (entry.type === "result") throw new Error("disk full");
+        await audit.append(entry);
+      },
+    };
+    await assert.rejects(runGate(h.deps, [proposal({ invoiceId: "inv-001" })]), (error: unknown) => {
+      assert.ok(error instanceof GateInterruptedError);
+      assert.equal(error.unknown, 1);
+      assert.match(error.message, /stopped after 1 live transfer ended unknown: disk full/);
+      assert.ok(error.cause instanceof Error && error.cause.message === "disk full");
+      return true;
+    });
+    assert.equal(h.executor.calls.length, 1);
+    const entries = await auditEntries(h.auditPath);
+    assert.equal(intents(entries).length, 1);
+    assert.equal(results(entries).length, 0);
+  });
+
+  it("rethrows the original error when the run dies with no unknown transfer", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    const audit = h.deps.audit;
+    h.deps.audit = {
+      ...audit,
+      async append(entry) {
+        if (entry.type === "result") throw new Error("disk full");
+        await audit.append(entry);
+      },
+    };
+    await assert.rejects(runGate(h.deps, [proposal({ invoiceId: "inv-001" })]), (error: unknown) => {
+      assert.ok(!(error instanceof GateInterruptedError));
+      assert.ok(error instanceof Error && error.message === "disk full");
+      return true;
+    });
+  });
+
+  it("does not reuse a key for a different amount or recipient", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload()), okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", 30));
+    await runGate(h.deps, [proposal({ invoiceId: "inv-001", amountUsdc: 2 }), proposal({ invoiceId: "inv-001", to: OTHER, amountUsdc: 1.5 })]);
+    assert.equal(h.executor.calls.length, 1);
+    assert.notEqual(h.executor.calls[0]?.idempotencyKey, KEY_A);
+  });
+
+  it("keeps a failed Kyro read a refuse in live mode with no spawn", async () => {
+    const h = await liveHarness("submitted", [errJson("INTERNAL_ERROR", "boom", 500)]);
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "refuse");
+    assert.equal(h.executor.calls.length, 0);
+    assert.equal(run.failed, 0);
+    assert.equal(run.unknown, 0);
   });
 });

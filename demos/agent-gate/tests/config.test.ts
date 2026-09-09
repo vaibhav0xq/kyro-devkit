@@ -52,6 +52,7 @@ describe("resolveConfig", () => {
     assert.equal(config.tasksPath, resolve(PKG, DEFAULTS.tasksFile));
     assert.equal(config.auditLogPath, resolve(PKG, DEFAULTS.auditFile));
     assert.equal(config.circleBin, "circle");
+    assert.equal(config.circleTimeoutMs, DEFAULTS.circleTimeoutMs);
   });
 
   it("lets flags win over environment", () => {
@@ -73,6 +74,7 @@ describe("resolveConfig", () => {
         AGENT_GATE_AUDIT_LOG: "logs/run.log",
         AGENT_GATE_INTERACTIVE: "true",
         CIRCLE_BIN: "/opt/circle/bin/circle",
+        CIRCLE_TIMEOUT_MS: "90000",
       },
       PKG,
     );
@@ -83,12 +85,27 @@ describe("resolveConfig", () => {
     assert.equal(config.auditLogPath, resolve(PKG, "logs/run.log"));
     assert.equal(config.interactive, true);
     assert.equal(config.circleBin, "/opt/circle/bin/circle");
+    assert.equal(config.circleTimeoutMs, 90_000);
   });
 
-  it("refuses live mode in this revision, with and without simulate", () => {
-    assert.throws(() => resolveConfig(parseFlags(["--mode", "live"]), {}, PKG), /live mode is not available/);
-    assert.throws(() => resolveConfig(parseFlags([]), { AGENT_GATE_MODE: "live" }, PKG), /live mode is not available/);
+  it("accepts live mode only with the paying wallet configured", () => {
+    const config = resolveConfig(parseFlags(["--mode", "live"]), { AGENT_WALLET_ADDRESS: AGENT }, PKG);
+    assert.equal(config.mode, "live");
+    assert.equal(config.agentWallet, AGENT);
+    assert.equal(config.circleTimeoutMs, DEFAULTS.circleTimeoutMs);
+    assert.equal(resolveConfig(parseFlags([]), { AGENT_GATE_MODE: "live", AGENT_WALLET_ADDRESS: AGENT }, PKG).mode, "live");
+
+    assert.throws(() => resolveConfig(parseFlags(["--mode", "live"]), {}, PKG), /live mode needs AGENT_WALLET_ADDRESS/);
+    assert.throws(() => resolveConfig(parseFlags([]), { AGENT_GATE_MODE: "live", AGENT_WALLET_ADDRESS: " " }, PKG), /live mode needs AGENT_WALLET_ADDRESS/);
+  });
+
+  it("refuses simulate in live mode before anything else is checked", () => {
     assert.throws(() => resolveConfig(parseFlags(["--mode", "live", "--simulate", "timeout"]), {}, PKG), /refused in live mode/);
+    assert.throws(
+      () => resolveConfig(parseFlags(["--mode", "live", "--simulate", "rate_limit"]), { AGENT_WALLET_ADDRESS: AGENT }, PKG),
+      /refused in live mode/,
+    );
+    assert.equal(resolveConfig(parseFlags(["--simulate", "timeout"]), { AGENT_WALLET_ADDRESS: AGENT }, PKG).simulate, "timeout");
   });
 
   it("rejects bad values loudly", () => {
@@ -98,6 +115,8 @@ describe("resolveConfig", () => {
     assert.throws(() => resolveConfig(parseFlags([]), { MAX_USDC_PER_TRANSFER: "0" }, PKG), /MAX_USDC_PER_TRANSFER/);
     assert.throws(() => resolveConfig(parseFlags([]), { MAX_USDC_PER_TRANSFER: "20", MAX_USDC_PER_RUN: "10" }, PKG), /cannot exceed/);
     assert.throws(() => resolveConfig(parseFlags([]), { KYRO_TIMEOUT_MS: "0" }, PKG), /KYRO_TIMEOUT_MS/);
+    assert.throws(() => resolveConfig(parseFlags([]), { CIRCLE_TIMEOUT_MS: "500" }, PKG), /CIRCLE_TIMEOUT_MS must be a number of at least 1000/);
+    assert.throws(() => resolveConfig(parseFlags([]), { CIRCLE_TIMEOUT_MS: "soon" }, PKG), /CIRCLE_TIMEOUT_MS/);
     assert.throws(() => resolveConfig(parseFlags([]), { AGENT_WALLET_ADDRESS: "wallet-id-123" }, PKG), /AGENT_WALLET_ADDRESS/);
   });
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   FROM_PLACEHOLDER,
+  buildReconcileArgv,
   buildTransferArgv,
   createDryRunExecutor,
   formatCommand,
@@ -58,6 +59,45 @@ describe("buildTransferArgv", () => {
   it("rejects malformed recipients and payers", () => {
     assert.throws(() => buildTransferArgv({ to: "0x1234", amountUsdc: 1, from: AGENT }), TypeError);
     assert.throws(() => buildTransferArgv({ to: BUILDER, amountUsdc: 1, from: "wallet-id" }), TypeError);
+  });
+
+  it("adds --idempotency-key before --output json only when a key is present", () => {
+    const key = "3f2a9c1e-7b4d-4e58-9a0f-2c6d8e1b5a73";
+    assert.deepEqual(buildTransferArgv({ to: BUILDER, amountUsdc: 1.5, from: AGENT, idempotencyKey: key }), [
+      "wallet",
+      "transfer",
+      BUILDER,
+      "--amount",
+      "1.5",
+      "--address",
+      AGENT,
+      "--chain",
+      "ARC-TESTNET",
+      "--idempotency-key",
+      key,
+      "--output",
+      "json",
+    ]);
+    assert.equal(buildTransferArgv({ to: BUILDER, amountUsdc: 1.5, from: AGENT }).includes("--idempotency-key"), false);
+  });
+});
+
+describe("buildReconcileArgv", () => {
+  it("lists the agent wallet's outbound transfers on ARC-TESTNET as JSON", () => {
+    assert.deepEqual(buildReconcileArgv(AGENT.toUpperCase().replace("0X", "0x")), [
+      "transaction",
+      "list",
+      "--address",
+      AGENT,
+      "--chain",
+      "ARC-TESTNET",
+      "--operation",
+      "transfer",
+      "--tx-type",
+      "outbound",
+      "--output",
+      "json",
+    ]);
   });
 });
 

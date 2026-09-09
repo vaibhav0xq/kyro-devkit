@@ -111,15 +111,62 @@ export interface TransferRequest {
   to: string;
   amountUsdc: number;
   from: string;
+  /**
+   * Circle API idempotency key for this payment intent, a UUID v4 the gate
+   * records in the audit log before anything is spawned. Live only: dry-run
+   * requests carry none and the printed command stays as it was.
+   */
+  idempotencyKey?: string;
 }
 
+/**
+ * What happened to a proceed.
+ *
+ * - `dry-run`: the command was printed, nothing ran.
+ * - `submitted`: the Circle CLI returned a terminal success (`CONFIRMED` or
+ *   `COMPLETE`) and the recipient, amount and chain in its answer match the
+ *   request.
+ * - `failed`: the CLI answered with an error that rules out a transfer:
+ *   it stopped before submitting or the transaction reached a terminal
+ *   failure. Nothing moved.
+ * - `unknown`: anything else. The CLI timed out, was stopped, answered
+ *   something unparsable or reported an error that may have been raised
+ *   after the transfer was submitted. Reconcile before paying again.
+ */
 export type ExecutionResult =
   | { state: "dry-run"; argv: string[] }
-  | { state: "submitted"; argv: string[]; txHash: string; chainState: string }
-  | { state: "unknown"; argv: string[]; exitCode: number | null; detail: string };
+  | {
+      state: "submitted";
+      argv: string[];
+      txHash: string;
+      chainState: string;
+      transactionId: string | null;
+      idempotencyKey: string | null;
+    }
+  | {
+      state: "failed";
+      argv: string[];
+      exitCode: number | null;
+      errorCode: string | null;
+      detail: string;
+      idempotencyKey: string | null;
+    }
+  | {
+      state: "unknown";
+      argv: string[];
+      exitCode: number | null;
+      errorCode: string | null;
+      detail: string;
+      idempotencyKey: string | null;
+    };
+
+export interface TransferHooks {
+  /** Called with the final argv right before the CLI is spawned. Never called in dry-run. */
+  onSpawn?: (argv: string[]) => void;
+}
 
 export interface Executor {
   readonly mode: Mode;
-  /** Only ever called for a proceed action. */
-  transfer(request: TransferRequest): Promise<ExecutionResult>;
+  /** Only ever called for a proceed action, exactly once per proposal. */
+  transfer(request: TransferRequest, hooks?: TransferHooks): Promise<ExecutionResult>;
 }

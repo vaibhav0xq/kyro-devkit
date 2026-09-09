@@ -144,12 +144,17 @@ pnpm run build
 pnpm agent-gate
 ```
 
-No credentials are needed. This revision is dry-run only: for a proceed it
-prints the exact Circle CLI command it would run and executes nothing. The
-task file ships three scenes, a claimed identity inside every limit, a wallet
-Kyro has never indexed and an amount above the advisory limit. Run
+No credentials are needed for the default dry-run: for a proceed it prints
+the exact Circle CLI command it would run and executes nothing. The task file
+ships three scenes, a claimed identity inside every limit, a wallet Kyro has
+never indexed and an amount above the advisory limit. Run
 `pnpm agent-gate -- --simulate timeout` to watch the gate fail closed when
-Kyro cannot answer.
+Kyro cannot answer. `--mode live` runs the same gate with a real executor:
+one Circle CLI transfer per proceed from an agent wallet you control, with an
+idempotency key, the CLI's JSON answer read into submitted, failed or unknown
+plus reconcile steps printed after an unknown. It needs a Circle CLI testnet
+agent session and `AGENT_WALLET_ADDRESS`; the demo README walks through it.
+No live transfer has been run through the gate yet.
 
 ## How Kyro decides
 

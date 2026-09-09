@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KyroDecision } from "@kyrodev/sdk";
 import { buildTransferArgv } from "../src/circle";
-import type { Assessment, ExecutionResult, Executor, FailureKind, Proposal, TransferRequest } from "../src/types";
+import type { Assessment, ExecutionResult, Executor, FailureKind, Mode, Proposal, TransferRequest } from "../src/types";
 import { CHAIN } from "../src/types";
 
 export const BUILDER = "0xbb30481982786ea53fe1856e0745eec814d83252";
@@ -130,16 +130,55 @@ export function recordingExecutor(
     state: "dry-run",
     argv,
   }),
+  mode: Mode = "dry-run",
 ): Executor & { calls: TransferRequest[] } {
   const calls: TransferRequest[] = [];
   return {
-    mode: "dry-run",
+    mode,
     calls,
-    async transfer(request) {
+    async transfer(request, hooks) {
       calls.push(request);
-      return result(request, buildTransferArgv(request));
+      const argv = buildTransferArgv(request);
+      if (mode === "live") hooks?.onSpawn?.(argv);
+      return result(request, argv);
     },
   };
+}
+
+export const TX_HASH = `0x${"ab".repeat(32)}`;
+export const CIRCLE_TX_ID = "7f1e2d3c-4b5a-4f60-9e8d-1c2b3a4f5e6d";
+
+/** A Circle CLI success envelope for the given request, as `--output json` prints it. */
+export function successEnvelope(
+  request: { to: string; amountUsdc: number; idempotencyKey?: string },
+  overrides: Record<string, unknown> = {},
+): string {
+  const data: Record<string, unknown> = {
+    ...(request.idempotencyKey !== undefined ? { idempotencyKey: request.idempotencyKey } : {}),
+    id: CIRCLE_TX_ID,
+    state: "CONFIRMED",
+    blockchain: CHAIN,
+    txHash: TX_HASH,
+    sourceAddress: AGENT,
+    destinationAddress: request.to,
+    amounts: [String(request.amountUsdc)],
+    amountInUSD: String(request.amountUsdc),
+    networkFee: "0",
+    operation: "TRANSFER",
+    transactionType: "OUTBOUND",
+    createDate: "2026-09-07T10:00:05.000Z",
+    updateDate: "2026-09-07T10:00:19.000Z",
+    ...overrides,
+  };
+  return `${JSON.stringify({ data }, null, 2)}\n`;
+}
+
+/** A Circle CLI error envelope, as `--output json` prints it on exit 1. */
+export function errorEnvelope(code: string, message: string, hint?: string): string {
+  const error: Record<string, unknown> = { code, message };
+  if (hint !== undefined) error.hint = hint;
+  if (code === "INTERNAL") error.feedbackHint = 'circle feedback submit --category BUG "<what you were doing>"';
+  return `${JSON.stringify({ error }, null, 2)}\n`;
 }
 
 export async function tempAuditPath(): Promise<string> {

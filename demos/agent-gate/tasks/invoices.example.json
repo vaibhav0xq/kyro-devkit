@@ -1,7 +1,7 @@
 {
   "chain": "ARC-TESTNET",
   "notes": [
-    "Three scenes for the dry-run. Amounts are testnet USDC and nothing is submitted in this revision.",
+    "Three scenes. Amounts are testnet USDC. Dry-run (the default) prints the Circle CLI command for a proceed and submits nothing; live pays a proceed through the Circle CLI from AGENT_WALLET_ADDRESS.",
     "inv-001: a claimed identity with committed evidence, inside the advisory limit and the operator caps. Expected: allow verdict, policy proceeds.",
     "inv-002: a wallet Kyro has never indexed. Expected: caution baseline with freshness indexing_required, policy holds. Replace the recipient with a second agent wallet you control before any live run.",
     "inv-003: the same identity as inv-001 with an amount above the advisory limit and the operator cap. Expected: allow verdict, policy holds."

@@ -14,7 +14,8 @@ import type {
   Proposal,
   SimulationKind,
 } from "./types";
-import { formatCommand } from "./circle";
+import { ARCSCAN_BASE_URL, buildReconcileArgv, formatCommand } from "./circle";
+import { DUPLICATE_WINDOW_MS } from "./policy";
 
 export type Out = (line: string) => void;
 
@@ -45,6 +46,8 @@ export interface HeaderInfo {
   agentWallet: string | undefined;
   simulate: SimulationKind | undefined;
   interactive: boolean;
+  /** Live only: the CLI binary and how long each transfer may take. */
+  circle?: { bin: string; timeoutMs: number };
 }
 
 export function renderHeader(out: Out, info: HeaderInfo): void {
@@ -53,6 +56,14 @@ export function renderHeader(out: Out, info: HeaderInfo): void {
   out(row("chain", info.chain));
   out(row("caps", `${usdc(info.caps.maxUsdcPerTransfer)} per transfer, ${usdc(info.caps.maxUsdcPerRun)} per run`));
   out(row("payer", info.agentWallet ?? "not set (AGENT_WALLET_ADDRESS); the printed command carries a placeholder"));
+  if (info.circle !== undefined) {
+    out(
+      row(
+        "circle",
+        `${info.circle.bin}, one spawn per proceed with its own --idempotency-key, up to ${Math.round(info.circle.timeoutMs / 1000)} s each, never retried`,
+      ),
+    );
+  }
   out(
     row(
       "kyro",
@@ -148,19 +159,66 @@ export function renderHumanAnswer(out: Out, approved: boolean, amountUsdc: numbe
   out(row("human", approved ? `approved ${usdc(amountUsdc)}` : "declined, nothing is paid"));
 }
 
-export function renderExecution(out: Out, bin: string, execution: ExecutionResult): void {
-  const command = formatCommand(bin, execution.argv);
+/** Live only: a retry of an invoice whose last attempt ended unknown carries the same key. */
+export function renderKeyReuse(out: Out, idempotencyKey: string, priorAt: string): void {
+  out(row("idempotency", `reusing key ${idempotencyKey} from the attempt at ${priorAt} that ended unknown`));
+}
+
+/** Live only, printed right before the CLI starts so the wait is never silent. */
+export function renderSpawn(out: Out, bin: string, argv: string[], timeoutMs: number | undefined): void {
+  out(row("executor", formatCommand(bin, argv)));
+  const budget = timeoutMs !== undefined ? ` (up to ${Math.round(timeoutMs / 1000)} s)` : "";
+  out(cont(`waiting for the Circle CLI, it answers once the transfer reaches a terminal state${budget}`));
+}
+
+export interface ExecutionContext {
+  /** The paying wallet, used to spell out the reconcile command after an unknown result. */
+  agentWallet: string | undefined;
+  invoiceId: string;
+  /** When the intent line was written; reconcile matches transactions created after it. */
+  intentAt: string;
+}
+
+export function renderExecution(out: Out, bin: string, execution: ExecutionResult, context?: ExecutionContext): void {
   if (execution.state === "dry-run") {
-    out(row("executor", `dry-run, not executed: ${command}`));
+    out(row("executor", `dry-run, not executed: ${formatCommand(bin, execution.argv)}`));
     return;
   }
-  out(row("executor", command));
   if (execution.state === "submitted") {
-    out(row("tx", `${execution.txHash} (${execution.chainState}), https://testnet.arcscan.app/tx/${execution.txHash}`));
+    out(row("tx", `${execution.txHash} (${execution.chainState}), ${ARCSCAN_BASE_URL}/tx/${execution.txHash}`));
+    out(
+      cont(
+        `circle transaction id ${execution.transactionId ?? "not reported"}, idempotency key ${execution.idempotencyKey ?? "none"}`,
+      ),
+    );
     return;
   }
-  out(row("tx", `unknown state (exit ${execution.exitCode ?? "none"}): ${execution.detail}`));
-  out(cont("verify on the explorer before retrying; the demo never retries on its own"));
+  const code = execution.errorCode !== null ? `${execution.errorCode}, ` : "";
+  const exit = `exit ${execution.exitCode ?? "none"}`;
+  if (execution.state === "failed") {
+    out(row("tx", `failed (${code}${exit}): ${execution.detail}`));
+    out(cont("nothing was paid; fix the cause and run again, the next attempt gets a new idempotency key"));
+    return;
+  }
+  out(row("tx", `unknown (${code}${exit}): ${execution.detail}`));
+  out(cont("the transfer may still be in flight; reconcile before anything else:"));
+  if (context?.agentWallet !== undefined) {
+    const to = execution.argv[2] ?? "the recipient";
+    const amount = execution.argv[4] ?? "the amount";
+    out(cont(formatCommand(bin, buildReconcileArgv(context.agentWallet))));
+    out(
+      cont(
+        `match destinationAddress ${to}, amounts ["${amount}"] and createDate after ${context.intentAt}, then ${ARCSCAN_BASE_URL}/address/${context.agentWallet.toLowerCase()}`,
+      ),
+    );
+  }
+  const invoice = context?.invoiceId ?? "this invoice";
+  const key = execution.idempotencyKey ?? "none";
+  out(
+    cont(
+      `this run never retries; a later run of ${invoice} is held for ${Math.round(DUPLICATE_WINDOW_MS / 60_000)} minutes and then reuses idempotency key ${key}`,
+    ),
+  );
 }
 
 export function renderOutcome(
@@ -175,6 +233,8 @@ export function renderOutcome(
     out(row("outcome", "held, no payment"));
   } else if (execution?.state === "dry-run") {
     out(row("outcome", `proceeded${humanApproved ? " after human approval" : ""}, dry-run so nothing was submitted`));
+  } else if (execution?.state === "failed") {
+    out(row("outcome", "failed, nothing was paid"));
   } else if (execution?.state === "unknown") {
     out(row("outcome", "unknown, a transfer may have been submitted"));
   } else {
@@ -187,6 +247,7 @@ export interface SummaryInfo {
   proceeded: number;
   held: number;
   refused: number;
+  failed: number;
   unknown: number;
   kyroReads: number;
   simulated: boolean;
@@ -197,7 +258,8 @@ export interface SummaryInfo {
 }
 
 export function renderSummary(out: Out, summary: SummaryInfo): void {
-  const counts = `proceeded ${summary.proceeded}, held ${summary.held}, refused ${summary.refused}${summary.unknown > 0 ? `, unknown ${summary.unknown}` : ""}`;
+  const extra = `${summary.failed > 0 ? `, failed ${summary.failed}` : ""}${summary.unknown > 0 ? `, unknown ${summary.unknown}` : ""}`;
+  const counts = `proceeded ${summary.proceeded}, held ${summary.held}, refused ${summary.refused}${extra}`;
   const reads = summary.simulated
     ? "Kyro reads 0 (every read in this run was SIMULATED)"
     : `Kyro reads ${summary.kyroReads} (1 anonymous rate unit each)`;

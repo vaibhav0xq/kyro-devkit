@@ -1,15 +1,17 @@
 /**
  * End-to-end runs of the real entry point in a child process. Every run here
- * uses --simulate, so no request reaches Kyro and the suite works offline.
+ * either uses --simulate or stops before the first read, so no request
+ * reaches Kyro, nothing is spawned and the suite works offline.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { tempAuditPath } from "./helpers";
+import { AGENT, tempAuditPath } from "./helpers";
 
 const run = promisify(execFile);
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,11 +57,65 @@ describe("cli", () => {
     assert.match(result.stdout, /--simulate <kind>/);
   });
 
-  it("--mode live exits 1 with a clear message in this revision", async () => {
-    const result = await cli(["--mode", "live"]);
+  it("--mode live without AGENT_WALLET_ADDRESS exits 1 before reading or spawning anything", async () => {
+    const result = await cli(["--mode", "live"], { AGENT_WALLET_ADDRESS: "" });
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /live mode is not available in this revision/);
+    assert.match(result.stderr, /live mode needs AGENT_WALLET_ADDRESS/);
     assert.equal(result.stdout, "");
+  });
+
+  it("--mode live refuses --simulate", async () => {
+    const result = await cli(["--mode", "live", "--simulate", "timeout"], { AGENT_WALLET_ADDRESS: AGENT });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--simulate is refused in live mode/);
+    assert.equal(result.stdout, "");
+  });
+
+  it("--mode live runs the gate and refuses a self-payment at the pre-screen without spawning the CLI", async () => {
+    const auditPath = await tempAuditPath();
+    const tasksPath = join(dirname(auditPath), "self.json");
+    await writeFile(
+      tasksPath,
+      JSON.stringify({ chain: "ARC-TESTNET", invoices: [{ id: "self-001", to: AGENT, amountUsdc: 1, memo: "pays the agent itself" }] }),
+      "utf8",
+    );
+    const result = await cli(["--mode", "live", "--tasks", tasksPath], {
+      AGENT_GATE_AUDIT_LOG: auditPath,
+      AGENT_WALLET_ADDRESS: AGENT,
+      CIRCLE_BIN: join(tmpdir(), "circle-that-does-not-exist"),
+      CIRCLE_TIMEOUT_MS: "1000",
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^Kyro agent gate \(live\)/);
+    assert.match(result.stdout, /circle\s+.*circle-that-does-not-exist, one spawn per proceed with its own --idempotency-key, up to 1 s each, never retried/);
+    assert.match(result.stdout, /RECIPIENT_IS_AGENT_WALLET/);
+    assert.match(result.stdout, /refused, no payment/);
+    assert.match(result.stdout, /Kyro reads 0/);
+    assert.doesNotMatch(result.stdout, /executor|SPAWN_FAILED|--idempotency-key <|tx\s/);
+    const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1);
+    const entry = JSON.parse(lines[0] ?? "{}") as { type: string; mode: string; action: string; idempotencyKey: unknown };
+    assert.equal(entry.type, "intent");
+    assert.equal(entry.mode, "live");
+    assert.equal(entry.action, "refuse");
+    assert.equal(entry.idempotencyKey, null);
+    await assert.rejects(readFile(`${auditPath}.lock`), /ENOENT/);
+  });
+
+  it("--mode live exits 1 before reading anything when another live run holds the audit lock", async () => {
+    const auditPath = await tempAuditPath();
+    const lockPath = `${auditPath}.lock`;
+    await writeFile(lockPath, "pid 4242 since 2026-09-07T10:00:00.000Z\n", "utf8");
+    const result = await cli(["--mode", "live", "--tasks", join(tmpdir(), "never-read.json")], {
+      AGENT_GATE_AUDIT_LOG: auditPath,
+      AGENT_WALLET_ADDRESS: AGENT,
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /another live run holds .*\.lock \(pid 4242 since 2026-09-07T10:00:00\.000Z\)/);
+    assert.match(result.stderr, /Nothing was read or spawned/);
+    assert.equal(result.stdout, "");
+    assert.equal(await readFile(lockPath, "utf8"), "pid 4242 since 2026-09-07T10:00:00.000Z\n");
+    await assert.rejects(readFile(auditPath), /ENOENT/);
   });
 
   it("an unknown flag exits 1 and shows usage", async () => {

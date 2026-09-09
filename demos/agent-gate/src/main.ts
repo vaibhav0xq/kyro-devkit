@@ -3,22 +3,28 @@
  *
  * A scripted planner proposes USDC payments on Arc Testnet. Every proposal
  * passes through the gate: an anonymous Kyro decision read, the operator
- * policy, an audit line, then the executor. In this revision the only
- * executor is dry-run: it prints the exact Circle CLI command and runs
- * nothing.
+ * policy, an audit line, then the executor. Dry-run, the default, prints the
+ * exact Circle CLI command and runs nothing. Live spawns the Circle CLI once
+ * per proceed and reports what it answered.
  *
  * Exit codes: 0 the run completed (any mix of proceed, hold and refuse),
- * 1 configuration or task file problem, 4 a live transfer ended in an
- * unknown state (not reachable in dry-run).
+ * 1 configuration, task file or lock problem (also a live transfer the
+ * Circle CLI rejected with nothing moved), 4 a live transfer ended in an
+ * unknown state and needs a reconcile, even when the run died afterwards
+ * (neither 1 for a transfer nor 4 is reachable in dry-run).
+ *
+ * Live runs take an exclusive lock next to the audit log before reading
+ * anything, because the duplicate guard and the key reuse read the log and
+ * then write it.
  */
 import { randomBytes } from "node:crypto";
 import { dirname, relative, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { createAuditLog } from "./audit";
-import { createDryRunExecutor } from "./circle";
+import { LiveLockError, acquireLiveLock, createAuditLog, releaseLockQuietly } from "./audit";
+import { createCircleCliExecutor, createDryRunExecutor } from "./circle";
 import { ConfigError, USAGE, loadDotEnv, parseFlags, resolveConfig } from "./config";
-import { runGate } from "./gate";
+import { GateInterruptedError, runGate } from "./gate";
 import { createKyroGateway } from "./kyro";
 import { TaskFileError, loadTaskList, plan } from "./planners/scripted";
 import { renderHeader, renderSummary } from "./render";
@@ -59,6 +65,16 @@ async function main(): Promise<number> {
   loadDotEnv(PACKAGE_DIR, process.env);
   const config = resolveConfig(flags, process.env, PACKAGE_DIR);
 
+  const lock = config.mode === "live" ? await acquireLiveLock(config.auditLogPath) : undefined;
+  try {
+    return await run(config);
+  } finally {
+    // A failed cleanup must not turn an exit 4 or a GateInterruptedError into exit 1.
+    if (lock !== undefined) await releaseLockQuietly(lock, (line) => process.stderr.write(`${line}\n`));
+  }
+}
+
+async function run(config: ReturnType<typeof resolveConfig>): Promise<number> {
   const tasks = await loadTaskList(config.tasksPath);
   const proposals = plan(tasks, config.only);
 
@@ -84,6 +100,7 @@ async function main(): Promise<number> {
     agentWallet: config.agentWallet,
     simulate: config.simulate,
     interactive: prompt !== undefined,
+    ...(config.mode === "live" ? { circle: { bin: config.circleBin, timeoutMs: config.circleTimeoutMs } } : {}),
   });
 
   const kyro = createKyroGateway({
@@ -92,7 +109,10 @@ async function main(): Promise<number> {
     ...(config.simulate !== undefined ? { simulate: config.simulate } : {}),
   });
   const audit = createAuditLog(config.auditLogPath);
-  const executor = createDryRunExecutor();
+  const executor =
+    config.mode === "live"
+      ? createCircleCliExecutor({ bin: config.circleBin, timeoutMs: config.circleTimeoutMs })
+      : createDryRunExecutor();
 
   const run = await runGate(
     {
@@ -106,6 +126,7 @@ async function main(): Promise<number> {
       mode: config.mode,
       runId: newRunId(),
       circleBin: config.circleBin,
+      circleTimeoutMs: config.circleTimeoutMs,
       ...(config.agentWallet !== undefined ? { agentWallet: config.agentWallet } : {}),
     },
     proposals,
@@ -115,6 +136,7 @@ async function main(): Promise<number> {
     proceeded: run.proceeded,
     held: run.held,
     refused: run.refused,
+    failed: run.failed,
     unknown: run.unknown,
     kyroReads: kyro.readsMade,
     simulated: kyro.simulated,
@@ -124,7 +146,8 @@ async function main(): Promise<number> {
     auditPath: displayPath(config.auditLogPath),
   });
 
-  return run.unknown > 0 ? 4 : 0;
+  if (run.unknown > 0) return 4;
+  return run.failed > 0 ? 1 : 0;
 }
 
 main().then(
@@ -132,7 +155,14 @@ main().then(
     process.exitCode = code;
   },
   (error: unknown) => {
-    if (error instanceof ConfigError || error instanceof TaskFileError) {
+    if (error instanceof GateInterruptedError) {
+      const cause = error.cause;
+      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${cause instanceof Error ? (cause.stack ?? cause.message) : String(cause)}\n`);
+      process.exitCode = 4;
+      return;
+    }
+    if (error instanceof ConfigError || error instanceof TaskFileError || error instanceof LiveLockError) {
       process.stderr.write(`${error.message}\n`);
     } else {
       process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);

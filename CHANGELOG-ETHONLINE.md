@@ -56,7 +56,7 @@ Source: the private product repository, not part of this submission.
   `--simulate` to reproduce each offline. Tests cover policy precedence,
   the command builder, the gateway, the audit-backed duplicate guard and the
   CLI; they run inside `pnpm run verify`. No live transfer, no receipts and
-  no model planner yet; `--mode live` exits with a message.
+  no model planner yet; `--mode live` exits with a message in this slice.
 - 2026-09-07: Architecture diagram exported to `docs/architecture.png`
   (1920x1080) and `docs/architecture@2x.png` (3840x2160). One board, six
   lanes: callers, public surface, engines, evidence, chains and execution
@@ -67,12 +67,36 @@ Source: the private product repository, not part of this submission.
   chain list, model versions) was checked against this repository before
   export. `docs/ARCHITECTURE.md` now embeds the board instead of announcing
   it. Arc Testnet only; Kyro stays advisory and non-custodial.
+- 2026-09-09: Agent gate demo, live slice, at `demos/agent-gate`.
+  `--mode live` runs the same gate with a real executor: one
+  `circle wallet transfer` on ARC-TESTNET per proceed, spawned once, never
+  retried. The CLI's JSON envelope is read, not its prose: exit 0 with
+  `data.state` CONFIRMED or COMPLETE, a well-formed `data.txHash` and a
+  recipient, amount and chain that match the request is `submitted`; an
+  error envelope whose `error.code` says nothing moved (AUTH_REQUIRED,
+  VERSION_BLOCKED, INVALID_ARGUMENT; INTERNAL with a terminal onchain
+  reason) or a binary that cannot start is `failed`; TIMEOUT, anything
+  unreadable, a mismatch or a spawn stopped by `CIRCLE_TIMEOUT_MS` is
+  `unknown`, which prints the `circle transaction list` reconcile steps and
+  exits 4. Every live proceed gets a UUID v4 `--idempotency-key`, written on
+  the audit intent line before the spawn and reused only when the previous
+  attempt for the same invoice, recipient and amount ended unknown or never
+  reported. Live intents now count for the ten-minute duplicate guard, so an
+  interrupted run holds the payment. A live run holds an exclusive lock
+  next to the audit log so two runs cannot pay the same invoice twice. Live
+  needs `AGENT_WALLET_ADDRESS` and refuses `--simulate`; the caps stay
+  5 USDC per transfer and 10 per run.
+  Dry-run output is unchanged. Tests cover the success and failure
+  envelopes, timeout as unknown, key placement and reuse, the no-retry
+  rule and the timeout kill, against fixtures and a stand-in CLI script;
+  nothing in the suite reaches Circle. No live transfer has been run
+  through the gate yet; the first one is the recorded take below.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 
-- Agent gate demo, live slice: the same gate executing real Arc Testnet
-  transfers from a fresh agent through the Circle CLI and Agent Wallets,
-  decision receipts for the recorded take and the recorded take itself.
+- Agent gate demo, recorded take: the first real Arc Testnet transfers from
+  a fresh agent wallet through `--mode live` and the Circle CLI, with
+  decision receipts, recorded end to end.
 - Architecture diagram export and two submission slides.
 - Demo video.
 - Arc mainnet activation on 16 September 2026 with evidence links (live URL

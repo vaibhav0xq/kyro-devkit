@@ -2,7 +2,7 @@
   "name": "@kyro-devkit/agent-gate",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent demo: a Kyro decision gate in front of Circle Agent Wallet USDC transfers on Arc Testnet. Dry-run only in this revision.",
+  "description": "Agent demo: a Kyro decision gate in front of Circle Agent Wallet USDC transfers on Arc Testnet. Dry-run prints the Circle CLI command; live spawns it once per proceed with an idempotency key.",
   "license": "MIT",
   "type": "module",
   "engines": {
