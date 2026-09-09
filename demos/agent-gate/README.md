@@ -96,6 +96,35 @@ operator policy decided and the Circle CLI moved the USDC.
   the holder. If a run was killed and the file is left behind, check that no
   run is active, then delete it.
 
+### Windows
+
+`npm install -g @circle-fin/cli` on Windows leaves `circle.cmd`, a batch
+shim, and Node refuses to start batch files without a shell (`EINVAL`, its
+CVE-2024-27980 hardening). Point `CIRCLE_BIN` at the shim's full path, what
+`where circle` prints, for example
+`C:\Users\<you>\AppData\Roaming\npm\circle.cmd`. A bare `circle` is not
+found from Node on Windows (`ENOENT`) because PATH lookup without a shell
+does not try `.cmd`; the demo says so in the failure.
+
+When `CIRCLE_BIN` ends in `.cmd` or `.bat` on Windows the demo starts it
+through `cmd.exe /d /s /c` with one pre-quoted line: the shim path in double
+quotes, then the same arguments dry-run prints. Before that line is built the
+path is refused if it holds a character cmd.exe acts on (`" % ! ^ & | < >`),
+and every argument is checked against the set the gate produces (letters,
+digits, `.`, `_`, `-`); anything else is a `failed` spawn with nothing
+started. It is still one process start per proceed with the same idempotency
+key, and the audit log still records the CLI argv, not the cmd.exe line.
+Anything that is not a batch file, on Windows or elsewhere, is spawned
+directly as before.
+
+One difference to know: if a run through the shim overruns
+`CIRCLE_TIMEOUT_MS`, the demo stops cmd.exe, not the CLI's own Node process
+underneath, which may keep running; the demo then waits for it to end (it
+holds the output pipes) before reporting, so the timeout is not a hard
+deadline on Windows. The result is `unknown` either way, the key stays with
+the intent and nothing is retried; reconcile as described below before
+running again.
+
 ### Manual preflight
 
 The demo does not probe the CLI before a run; do these yourself once:
@@ -270,4 +299,7 @@ pre-screen and the audit log goes to a temporary directory. The live
 executor is tested against fixtures of the Circle CLI 1.0.0 JSON output
 (success envelope, error envelope, timeout, non-JSON) and against a stand-in
 shell script that records its argv and answers like the CLI, including one
-that overruns `CIRCLE_TIMEOUT_MS`. No test reaches Circle or Arc.
+that overruns `CIRCLE_TIMEOUT_MS`. The Windows path runs on every OS through
+a recording spawn: the cmd.exe line for a `.cmd` shim, the direct spawn for
+everything else, the refused characters and the `EINVAL` hint, without
+starting a process. No test reaches Circle or Arc.

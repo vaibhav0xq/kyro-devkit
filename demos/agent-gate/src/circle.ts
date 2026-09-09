@@ -8,6 +8,13 @@
  * `interpretTransferOutput`, which is pure so the contract can be tested
  * against fixtures without a CLI or a session.
  *
+ * One exception to "no shell": on Windows a global npm install leaves
+ * `circle.cmd`, a batch shim, and Node refuses to spawn batch files directly
+ * (EINVAL, the CVE-2024-27980 hardening). When CIRCLE_BIN ends in .cmd or
+ * .bat on win32, `planSpawn` hands cmd.exe one pre-quoted line built from
+ * the same argv, after checking every part against a strict character set.
+ * Still one process start per proceed, still the same command.
+ *
  * Output contract (Circle CLI 1.0.0, `--output json`):
  * - success: exit 0, stdout `{ "data": { id, state, txHash, blockchain,
  *   destinationAddress, amounts, ... } }`, `state` is terminal (`CONFIRMED`
@@ -104,6 +111,57 @@ export function buildReconcileArgv(agentWallet: string): string[] {
 /** Human-readable command line. Only for display; nothing here reaches a shell. */
 export function formatCommand(bin: string, argv: string[]): string {
   return [bin, ...argv].map((part) => (/\s/.test(part) ? JSON.stringify(part) : part)).join(" ");
+}
+
+/** What npm writes for a global install on Windows; Node will not spawn these without a shell. */
+const WINDOWS_BATCH_FILE = /\.(cmd|bat)$/i;
+
+/** Characters cmd.exe could act on inside the quoted path it is handed. */
+const CMD_UNSAFE_IN_PATH = /["%!^&|<>\r\n\0]/;
+
+/**
+ * Every argument the gate builds (subcommands, flags, addresses, a decimal
+ * amount, ARC-TESTNET, a UUID, json) is drawn from this set. Anything else
+ * never reaches cmd.exe, so nothing on that line is ever interpreted.
+ */
+const CMD_SAFE_ARGUMENT = /^[A-Za-z0-9._-]+$/;
+
+/** How the CLI is started: the file and arguments handed to child_process.spawn. */
+export interface SpawnPlan {
+  file: string;
+  args: string[];
+  /** True only on the cmd.exe path, where the arguments are one pre-quoted line. */
+  windowsVerbatimArguments: boolean;
+  /** True when a .cmd or .bat CIRCLE_BIN runs through cmd.exe on Windows. */
+  throughCmd: boolean;
+}
+
+/**
+ * Direct spawn everywhere, except a .cmd or .bat CIRCLE_BIN on win32, which
+ * goes through `cmd.exe /d /s /c "<"bin" argv...>"` the way Node's own
+ * `shell: true` would, minus the unchecked join: the path may not carry a
+ * character cmd.exe acts on and every argument must match CMD_SAFE_ARGUMENT.
+ * A plan that cannot be built safely is refused before anything starts.
+ */
+export function planSpawn(
+  bin: string,
+  argv: string[],
+  platform: NodeJS.Platform = process.platform,
+  comSpec?: string,
+): SpawnPlan {
+  if (platform !== "win32" || !WINDOWS_BATCH_FILE.test(bin)) {
+    return { file: bin, args: argv, windowsVerbatimArguments: false, throughCmd: false };
+  }
+  if (CMD_UNSAFE_IN_PATH.test(bin)) {
+    throw new TypeError(`CIRCLE_BIN ${JSON.stringify(bin)} has a character cmd.exe could act on; use a plain path to the .cmd shim`);
+  }
+  const unsafe = argv.find((part) => !CMD_SAFE_ARGUMENT.test(part));
+  if (unsafe !== undefined) {
+    throw new TypeError(`argument ${JSON.stringify(unsafe)} is outside the character set the demo passes through cmd.exe`);
+  }
+  const line = [`"${bin}"`, ...argv].join(" ");
+  const shell = comSpec?.trim() || "cmd.exe";
+  return { file: shell, args: ["/d", "/s", "/c", `"${line}"`], windowsVerbatimArguments: true, throughCmd: true };
 }
 
 /** Builds the exact argv a live run would pass to the CLI and returns it unexecuted. */
@@ -207,7 +265,7 @@ export function interpretTransferOutput(
       state: "unknown",
       ...base,
       errorCode: null,
-      detail: "no answer before CIRCLE_TIMEOUT_MS passed; the CLI was stopped and the transfer may still be in flight",
+      detail: "no answer before CIRCLE_TIMEOUT_MS passed; the process the demo started was stopped and the transfer may still be in flight",
     };
   }
   if (outcome.processError !== undefined) {
@@ -276,12 +334,19 @@ export function interpretTransferOutput(
 }
 
 export interface CircleCliExecutorOptions {
-  /** Binary name or path, from CIRCLE_BIN. Resolved through PATH by the OS, never a shell. */
+  /**
+   * Binary name or path, from CIRCLE_BIN. Resolved through PATH by the OS,
+   * never a shell, except a .cmd or .bat shim on Windows (see planSpawn).
+   */
   bin: string;
   /** How long to wait for the CLI before stopping it and reporting unknown. */
   timeoutMs: number;
   /** Environment for the child; defaults to this process's environment, untouched. */
   env?: NodeJS.ProcessEnv;
+  /** Defaults to process.platform. Decides whether a batch shim goes through cmd.exe. Tests set it. */
+  platform?: NodeJS.Platform;
+  /** Defaults to child_process.spawn. Tests hand in a recorder that never starts a process. */
+  spawnImpl?: typeof spawn;
 }
 
 /** Grace period between SIGTERM and SIGKILL when the CLI overruns CIRCLE_TIMEOUT_MS. */
@@ -297,6 +362,20 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
+/**
+ * On Windows the two ways a direct spawn of the CLI fails before it starts
+ * are both about CIRCLE_BIN: EINVAL when it is a batch file reached without
+ * the .cmd suffix, ENOENT when a bare name is not found because PATH lookup
+ * without a shell does not try .cmd. Say so next to the code.
+ */
+function spawnErrorText(error: unknown, plan: SpawnPlan, platform: NodeJS.Platform): string {
+  const text = errorText(error);
+  if (platform === "win32" && !plan.throughCmd && (text === "EINVAL" || text === "ENOENT")) {
+    return `${text} (on Windows point CIRCLE_BIN at the full path of circle.cmd, what "where circle" prints)`;
+  }
+  return text;
+}
+
 function runCli(options: CircleCliExecutorOptions, argv: string[]): Promise<CliOutcome> {
   return new Promise((resolve) => {
     let stdout = "";
@@ -306,16 +385,29 @@ function runCli(options: CircleCliExecutorOptions, argv: string[]): Promise<CliO
     let settled = false;
     let killTimer: NodeJS.Timeout | undefined;
 
-    let child: ReturnType<typeof spawn>;
+    const platform = options.platform ?? process.platform;
+    const env = options.env ?? process.env;
+    const spawnFn = options.spawnImpl ?? spawn;
+
+    let plan: SpawnPlan;
     try {
-      child = spawn(options.bin, argv, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: options.env ?? process.env,
-        shell: false,
-        windowsHide: true,
-      });
+      plan = planSpawn(options.bin, argv, platform, env.ComSpec);
     } catch (error) {
       resolve({ exitCode: null, signal: null, stdout, stderr, timedOut, spawnError: errorText(error) });
+      return;
+    }
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawnFn(plan.file, plan.args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env,
+        shell: false,
+        windowsHide: true,
+        windowsVerbatimArguments: plan.windowsVerbatimArguments,
+      });
+    } catch (error) {
+      resolve({ exitCode: null, signal: null, stdout, stderr, timedOut, spawnError: spawnErrorText(error, plan, platform) });
       return;
     }
     if (child.stdout === null || child.stderr === null) {
@@ -354,7 +446,7 @@ function runCli(options: CircleCliExecutorOptions, argv: string[]): Promise<CliO
       // it, the error is about the process (a kill that failed, for example)
       // and says nothing about the transfer.
       if (!spawned) {
-        finish({ exitCode: null, signal: null, stdout, stderr, timedOut, spawnError: errorText(error) });
+        finish({ exitCode: null, signal: null, stdout, stderr, timedOut, spawnError: spawnErrorText(error, plan, platform) });
       } else {
         finish({ exitCode: null, signal: null, stdout, stderr, timedOut, processError: errorText(error) });
       }

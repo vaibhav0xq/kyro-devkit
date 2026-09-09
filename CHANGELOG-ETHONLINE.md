@@ -91,6 +91,19 @@ Source: the private product repository, not part of this submission.
   rule and the timeout kill, against fixtures and a stand-in CLI script;
   nothing in the suite reaches Circle. No live transfer has been run
   through the gate yet; the first one is the recorded take below.
+- 2026-09-09: Agent gate demo, Windows spawn fix at `demos/agent-gate`. The
+  first live attempt on Windows failed before the Circle CLI started:
+  `CIRCLE_BIN` pointed at `circle.cmd`, the batch shim a global npm install
+  leaves, and Node refuses to spawn batch files without a shell (`EINVAL`,
+  CVE-2024-27980). The gate reported `failed` with `SPAWN_FAILED` and nothing
+  was paid, as designed. Now a `.cmd` or `.bat` `CIRCLE_BIN` on Windows is
+  started through `cmd.exe /d /s /c` with one pre-quoted line built from the
+  same argv, after the path is refused for any character cmd.exe acts on and
+  every argument is checked against the set the gate produces. Everything
+  else is spawned directly as before. Still one process start per proceed,
+  same idempotency key, same audit argv; the `EINVAL` and `ENOENT` details on
+  Windows now name the `circle.cmd` path to use. Tests drive the executor
+  through a recording spawn on every OS. No live transfer has been run yet.
 
 ## Planned inside the window (not yet done, listed so the plan is public)
 
