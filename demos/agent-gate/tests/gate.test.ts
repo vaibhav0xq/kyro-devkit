@@ -16,15 +16,19 @@ import {
   FIXED_NOW,
   FRESH,
   OTHER,
+  PAYLOAD_HASH,
+  RECEIPT_ID,
   TX_HASH,
   baselinePayload,
   collectOut,
+  createdJson,
   decisionPayload,
   errJson,
   hangingAnswer,
   mockFetch,
   okJson,
   proposal,
+  receiptPayload,
   recordingExecutor,
   scriptedPrompt,
   tempAuditPath,
@@ -58,6 +62,7 @@ async function harness(
     now: () => new Date(FIXED_NOW.getTime() + tick++ * 1000),
     caps,
     mode: "dry-run",
+    receipts: false,
     runId: "test-run",
     circleBin: "circle",
     ...overrides,
@@ -273,6 +278,209 @@ describe("gate: run budget and duplicates", () => {
     const liveRun = await runGate(live.deps, [proposal()]);
     assert.equal(liveRun.outcomes[0]?.action, "hold");
     assert.deepEqual(liveRun.outcomes[0]?.policy.conditions.map((c) => c.code), ["DUPLICATE_RECENT"]);
+  });
+});
+
+const RECEIPT_URL = `https://www.thekyro.co/check/r/${RECEIPT_ID}`;
+
+describe("gate: decision receipts", () => {
+  it("makes no receipt request and records nulls when receipts are off", async () => {
+    const h = await harness([okJson(decisionPayload())]);
+    const run = await runGate(h.deps, [proposal()]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(run.outcomes[0]?.receipt, undefined);
+    assert.equal(h.calls.length, 1);
+    assert.doesNotMatch(h.out.text(), /receipt/);
+    const intent = intents(await auditEntries(h.auditPath))[0];
+    assert.equal(intent?.receiptId, null);
+    assert.equal(intent?.receiptPayloadHash, null);
+    assert.equal(intent?.receiptDeduped, null);
+    assert.equal(intent?.receiptUrl, null);
+  });
+
+  it("mints after the policy says proceed and before the executor, records it and prints the URL", async () => {
+    const h = await harness([okJson(decisionPayload()), createdJson(receiptPayload())], { receipts: true });
+    let receiptCallsAtTransfer = -1;
+    const transfer = h.executor.transfer.bind(h.executor);
+    h.executor.transfer = async (request, hooks) => {
+      receiptCallsAtTransfer = h.calls.filter((call) => call.url.endsWith("/api/v1/decision-receipts")).length;
+      return transfer(request, hooks);
+    };
+    const run = await runGate(h.deps, [proposal()]);
+
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(run.outcomes[0]?.receipt?.id, RECEIPT_ID);
+    assert.equal(run.outcomes[0]?.receiptCondition, undefined);
+    assert.equal(h.executor.calls.length, 1);
+    assert.equal(receiptCallsAtTransfer, 1);
+    assert.equal(h.deps.kyro.receiptsConfirmed, 1);
+    assert.equal(h.deps.kyro.readsMade, 1);
+
+    assert.equal(h.calls.length, 2);
+    const post = h.calls[1];
+    assert.equal(post?.url, "https://www.thekyro.co/api/v1/decision-receipts");
+    assert.equal(post?.init.method, "POST");
+    assert.deepEqual(JSON.parse(String(post?.init.body)), { wallet: BUILDER, useCase: "payment" });
+    const headers = new Headers(post?.init.headers);
+    assert.equal(headers.get("authorization"), null);
+
+    const text = h.out.text();
+    assert.match(text, new RegExp(`receipt\\s+${RECEIPT_ID} \\(new\\), ${RECEIPT_URL}`));
+    assert.match(text, new RegExp(`verdict allow, limit 1000 USDC advisory, payload hash ${PAYLOAD_HASH}`));
+    assert.match(text, /outcome\s+proceeded, dry-run so nothing was submitted/);
+    assert.ok(text.indexOf("receipt ") < text.indexOf("executor "), "the receipt line comes before the executor line");
+
+    const entries = await auditEntries(h.auditPath);
+    const intent = intents(entries)[0];
+    assert.equal(intent?.action, "proceed");
+    assert.deepEqual(intent?.conditions, []);
+    assert.equal(intent?.receiptId, RECEIPT_ID);
+    assert.equal(intent?.receiptPayloadHash, PAYLOAD_HASH);
+    assert.equal(intent?.receiptDeduped, false);
+    assert.equal(intent?.receiptUrl, RECEIPT_URL);
+    assert.equal(results(entries).length, 1);
+  });
+
+  it("labels a deduped receipt and still proceeds", async () => {
+    const h = await harness([okJson(decisionPayload()), okJson(receiptPayload({}, { deduped: true }))], { receipts: true });
+    const run = await runGate(h.deps, [proposal()]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(run.outcomes[0]?.receipt?.deduped, true);
+    assert.equal(h.deps.kyro.receiptsConfirmed, 1);
+    assert.equal(h.deps.kyro.receiptsDeduped, 1);
+    assert.match(h.out.text(), /\(deduped, same decision state minted earlier today\)/);
+    assert.equal(intents(await auditEntries(h.auditPath))[0]?.receiptDeduped, true);
+  });
+
+  it("never mints for a hold or a refuse", async () => {
+    const h = await harness([okJson(baselinePayload(FRESH)), errJson("INTERNAL_ERROR", "boom", 500)], { receipts: true });
+    const run = await runGate(h.deps, [proposal({ to: FRESH }), proposal({ invoiceId: "inv-x" })]);
+    assert.deepEqual(run.outcomes.map((o) => o.action), ["hold", "refuse"]);
+    assert.equal(h.calls.length, 2);
+    assert.ok(h.calls.every((call) => call.init.method === undefined || call.init.method === "GET"));
+    assert.equal(h.deps.kyro.receiptsConfirmed, 0);
+    assert.doesNotMatch(h.out.text(), /receipt/);
+  });
+
+  it("holds instead of proceeding when the receipt verdict disagrees with the read", async () => {
+    const answer = createdJson(receiptPayload({ decision: "caution", riskLevel: "Medium Risk", recommendedLimit: { amountUsdc: 50, currency: "USDC", basis: "caution" } }));
+    const h = await harness([okJson(decisionPayload()), answer], { receipts: true });
+    const run = await runGate(h.deps, [proposal()]);
+
+    assert.equal(run.outcomes[0]?.action, "hold");
+    assert.equal(run.outcomes[0]?.approvedAmountUsdc, undefined);
+    assert.equal(run.outcomes[0]?.receipt?.id, RECEIPT_ID);
+    assert.equal(run.outcomes[0]?.receiptCondition?.code, "RECEIPT_MISMATCH");
+    assert.equal(run.held, 1);
+    assert.equal(run.proceeded, 0);
+    assert.equal(run.approvedUsdc, 0);
+    assert.equal(h.executor.calls.length, 0);
+
+    const text = h.out.text();
+    assert.match(text, new RegExp(`receipt\\s+${RECEIPT_ID} \\(new\\), ${RECEIPT_URL}`));
+    assert.match(text, /hold: receipt rcp_\S+ froze verdict caution, the read this run acted on said allow; run again for a fresh read \(RECEIPT_MISMATCH\)/);
+    assert.match(text, /outcome\s+held, no payment/);
+    assert.doesNotMatch(text, /executor/);
+
+    const entries = await auditEntries(h.auditPath);
+    const intent = intents(entries)[0];
+    assert.equal(intent?.action, "hold");
+    assert.equal(intent?.approvedUsdc, null);
+    assert.deepEqual(intent?.conditions, ["RECEIPT_MISMATCH"]);
+    assert.equal(intent?.verdict, "allow");
+    assert.equal(intent?.receiptId, RECEIPT_ID);
+    assert.equal(intent?.receiptUrl, RECEIPT_URL);
+    assert.equal(results(entries).length, 0);
+  });
+
+  it("holds when the receipt's advisory limit is below the amount about to be paid", async () => {
+    const answer = createdJson(receiptPayload({ recommendedLimit: { amountUsdc: 1, currency: "USDC", basis: "allow" } }));
+    const h = await harness([okJson(decisionPayload()), answer], { receipts: true });
+    const run = await runGate(h.deps, [proposal({ amountUsdc: 1.5 })]);
+    assert.equal(run.outcomes[0]?.action, "hold");
+    assert.equal(run.outcomes[0]?.receiptCondition?.code, "RECEIPT_MISMATCH");
+    assert.equal(h.executor.calls.length, 0);
+    assert.match(h.out.text(), /froze an advisory limit of 1 USDC, below the 1.5 USDC about to be paid/);
+  });
+
+  it("refuses and never calls the executor when the receipt cannot be minted", async () => {
+    const cases: Array<[Parameters<typeof mockFetch>[0], RegExp]> = [
+      [errJson("INTERNAL_ERROR", "boom", 500), /server error/],
+      [errJson("RATE_LIMITED", "slow down", 429, { "retry-after": "30" }), /rate limit.*retry after 30 s/],
+      [hangingAnswer(), /timeout/],
+      [createdJson({ ...receiptPayload(), url: "https://elsewhere.example/r" }), /bad response \(receipt payload is missing or malformed at url\)/],
+      [createdJson({ ...receiptPayload(), url: `//evil.example/check/r/${RECEIPT_ID}` }), /malformed at url/],
+      [createdJson({ ...receiptPayload(), url: `/\\evil.example/check/r/${RECEIPT_ID}` }), /malformed at url/],
+      [createdJson({ ...receiptPayload(), url: "//[" }), /malformed at url/],
+      [createdJson(receiptPayload({ wallet: OTHER })), /receipt is for a different wallet/],
+    ];
+    for (const [answer, expected] of cases) {
+      const h = await harness([okJson(decisionPayload()), answer], { receipts: true });
+      const run = await runGate(h.deps, [proposal()]);
+      assert.equal(run.outcomes[0]?.action, "refuse", String(expected));
+      assert.equal(run.outcomes[0]?.receipt, undefined);
+      assert.equal(run.outcomes[0]?.receiptCondition?.code, "RECEIPT_UNAVAILABLE");
+      assert.equal(run.refused, 1);
+      assert.equal(run.approvedUsdc, 0);
+      assert.equal(h.executor.calls.length, 0);
+      assert.equal(h.deps.kyro.receiptsConfirmed, 0);
+
+      const text = h.out.text();
+      assert.match(text, /receipt\s+not minted/);
+      assert.match(text, /refuse: no decision receipt, /);
+      assert.match(text, expected);
+      assert.match(text, /nothing is paid without one \(RECEIPT_UNAVAILABLE\)/);
+      assert.match(text, /outcome\s+refused, no payment/);
+
+      const entries = await auditEntries(h.auditPath);
+      const intent = intents(entries)[0];
+      assert.equal(intent?.action, "refuse");
+      assert.deepEqual(intent?.conditions, ["RECEIPT_UNAVAILABLE"]);
+      assert.equal(intent?.verdict, "allow");
+      assert.equal(intent?.receiptId, null);
+      assert.equal(intent?.receiptUrl, null);
+      assert.equal(results(entries).length, 0);
+    }
+  });
+
+  it("mints for a human-approved capped payment and checks the receipt against the capped amount", async () => {
+    const { prompt, questions } = scriptedPrompt(["y"]);
+    const answer = createdJson(receiptPayload({ recommendedLimit: { amountUsdc: 5, currency: "USDC", basis: "allow" } }));
+    const h = await harness([okJson(decisionPayload()), answer], { prompt, receipts: true });
+    const run = await runGate(h.deps, [proposal({ amountUsdc: 1200 })]);
+    assert.equal(questions.length, 1);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(run.outcomes[0]?.humanApproved, true);
+    assert.equal(run.outcomes[0]?.receipt?.id, RECEIPT_ID);
+    assert.deepEqual(h.executor.calls, [{ to: BUILDER, amountUsdc: 5, from: FROM_PLACEHOLDER }]);
+    const text = h.out.text();
+    assert.ok(text.indexOf("approve 5 USDC") < text.indexOf("receipt "), "the human answers before the receipt is minted");
+    const intent = intents(await auditEntries(h.auditPath))[0];
+    assert.equal(intent?.action, "proceed");
+    assert.equal(intent?.approvedUsdc, 5);
+    assert.equal(intent?.receiptId, RECEIPT_ID);
+  });
+
+  it("does not offer a mismatch hold to the human", async () => {
+    const { prompt, questions } = scriptedPrompt(["y"]);
+    const answer = createdJson(receiptPayload({ decision: "block", riskLevel: "High Risk", recommendedLimit: { amountUsdc: 0, currency: "USDC", basis: "block" } }));
+    const h = await harness([okJson(decisionPayload()), answer], { prompt, receipts: true });
+    const run = await runGate(h.deps, [proposal()]);
+    assert.equal(run.outcomes[0]?.action, "hold");
+    assert.equal(run.outcomes[0]?.receiptCondition?.code, "RECEIPT_MISMATCH");
+    assert.deepEqual(questions, []);
+    assert.equal(h.executor.calls.length, 0);
+  });
+
+  it("holds the same-run duplicate of a receipted payment as before", async () => {
+    const h = await harness(
+      [okJson(decisionPayload()), createdJson(receiptPayload()), okJson(decisionPayload())],
+      { receipts: true },
+    );
+    const run = await runGate(h.deps, [proposal({ invoiceId: "a" }), proposal({ invoiceId: "b" })]);
+    assert.deepEqual(run.outcomes.map((o) => o.action), ["proceed", "hold"]);
+    assert.equal(h.calls.length, 3);
+    assert.equal(h.deps.kyro.receiptsConfirmed, 1);
   });
 });
 
@@ -617,5 +825,55 @@ describe("gate: live mode", () => {
     assert.equal(h.executor.calls.length, 0);
     assert.equal(run.failed, 0);
     assert.equal(run.unknown, 0);
+  });
+
+  it("records the receipt and the idempotency key on the same intent line before the spawn", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload()), createdJson(receiptPayload())], { receipts: true });
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.proceeded, 1);
+    assert.equal(h.executor.calls.length, 1);
+    const key = h.executor.calls[0]?.idempotencyKey;
+    assert.ok(key !== undefined && UUID_V4.test(key));
+
+    const entries = await auditEntries(h.auditPath);
+    const intent = intents(entries)[0];
+    assert.equal(intent?.mode, "live");
+    assert.equal(intent?.idempotencyKey, key);
+    assert.equal(intent?.receiptId, RECEIPT_ID);
+    assert.equal(intent?.receiptPayloadHash, PAYLOAD_HASH);
+    assert.equal(intent?.receiptUrl, RECEIPT_URL);
+    assert.equal(results(entries)[0]?.state, "submitted");
+
+    const text = h.out.text();
+    assert.ok(text.indexOf("receipt ") < text.indexOf("executor "), "the receipt is minted before the spawn");
+    assert.match(text, new RegExp(`tx\\s+${TX_HASH} \\(CONFIRMED\\)`));
+  });
+
+  it("gives a live proceed no key and no spawn when the receipt fails or disagrees", async () => {
+    for (const [answer, action] of [
+      [errJson("INTERNAL_ERROR", "boom", 503), "refuse"],
+      [createdJson(receiptPayload({ decision: "block", recommendedLimit: { amountUsdc: 0, currency: "USDC", basis: "block" } })), "hold"],
+    ] as const) {
+      const h = await liveHarness("submitted", [okJson(decisionPayload()), answer], { receipts: true });
+      const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+      assert.equal(run.outcomes[0]?.action, action);
+      assert.equal(run.proceeded, 0);
+      assert.equal(h.executor.calls.length, 0);
+      const entries = await auditEntries(h.auditPath);
+      assert.equal(intents(entries)[0]?.action, action);
+      assert.equal(intents(entries)[0]?.idempotencyKey, null);
+      assert.equal(results(entries).length, 0);
+    }
+  });
+
+  it("does not count a receipt-refused or receipt-held live intent as an earlier payment", async () => {
+    const first = await liveHarness("submitted", [okJson(decisionPayload()), errJson("INTERNAL_ERROR", "boom", 503)], { receipts: true });
+    await runGate(first.deps, [proposal({ invoiceId: "inv-001" })]);
+    const second = await liveHarness("submitted", [okJson(decisionPayload()), createdJson(receiptPayload())], { receipts: true });
+    await writeFile(second.auditPath, await readFile(first.auditPath, "utf8"));
+    const run = await runGate(second.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.deepEqual(run.outcomes[0]?.policy.conditions, []);
+    assert.equal(second.executor.calls.length, 1);
   });
 });

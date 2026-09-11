@@ -46,6 +46,7 @@ describe("resolveConfig", () => {
     assert.equal(config.simulate, undefined);
     assert.equal(config.agentWallet, undefined);
     assert.equal(config.interactive, false);
+    assert.equal(config.receipts, false);
     assert.deepEqual(config.caps, { maxUsdcPerTransfer: DEFAULTS.maxUsdcPerTransfer, maxUsdcPerRun: DEFAULTS.maxUsdcPerRun });
     assert.equal(config.timeoutMs, DEFAULTS.timeoutMs);
     assert.equal(config.minIntervalMs, DEFAULTS.minIntervalMs);
@@ -99,6 +100,19 @@ describe("resolveConfig", () => {
     assert.throws(() => resolveConfig(parseFlags([]), { AGENT_GATE_MODE: "live", AGENT_WALLET_ADDRESS: " " }, PKG), /live mode needs AGENT_WALLET_ADDRESS/);
   });
 
+  it("mints receipts by default in live mode only, with the flag winning over the environment", () => {
+    const live = { AGENT_WALLET_ADDRESS: AGENT };
+    assert.equal(resolveConfig(parseFlags(["--mode", "live"]), live, PKG).receipts, true);
+    assert.equal(resolveConfig(parseFlags(["--mode", "live", "--receipts", "off"]), live, PKG).receipts, false);
+    assert.equal(resolveConfig(parseFlags(["--receipts", "on"]), {}, PKG).receipts, true);
+    assert.equal(resolveConfig(parseFlags(["--receipts=off"]), {}, PKG).receipts, false);
+    assert.equal(resolveConfig(parseFlags([]), { AGENT_GATE_RECEIPTS: "on" }, PKG).receipts, true);
+    assert.equal(resolveConfig(parseFlags([]), { AGENT_GATE_RECEIPTS: " " }, PKG).receipts, false);
+    assert.equal(resolveConfig(parseFlags(["--mode", "live"]), { ...live, AGENT_GATE_RECEIPTS: "off" }, PKG).receipts, false);
+    assert.equal(resolveConfig(parseFlags(["--receipts", "on"]), { AGENT_GATE_RECEIPTS: "off" }, PKG).receipts, true);
+    assert.equal(resolveConfig(parseFlags(["--simulate", "timeout", "--receipts", "on"]), {}, PKG).receipts, true);
+  });
+
   it("refuses simulate in live mode before anything else is checked", () => {
     assert.throws(() => resolveConfig(parseFlags(["--mode", "live", "--simulate", "timeout"]), {}, PKG), /refused in live mode/);
     assert.throws(
@@ -111,6 +125,9 @@ describe("resolveConfig", () => {
   it("rejects bad values loudly", () => {
     assert.throws(() => resolveConfig(parseFlags(["--mode", "test"]), {}, PKG), /mode must be dry-run or live/);
     assert.throws(() => resolveConfig(parseFlags(["--simulate", "outage"]), {}, PKG), /--simulate must be one of/);
+    assert.throws(() => resolveConfig(parseFlags(["--receipts", "yes"]), {}, PKG), /--receipts must be on or off, got "yes"/);
+    assert.throws(() => resolveConfig(parseFlags([]), { AGENT_GATE_RECEIPTS: "1" }, PKG), /AGENT_GATE_RECEIPTS must be on or off/);
+    assert.throws(() => parseFlags(["--receipts"]), /--receipts needs a value/);
     assert.throws(() => resolveConfig(parseFlags([]), { MAX_USDC_PER_TRANSFER: "abc" }, PKG), /MAX_USDC_PER_TRANSFER/);
     assert.throws(() => resolveConfig(parseFlags([]), { MAX_USDC_PER_TRANSFER: "0" }, PKG), /MAX_USDC_PER_TRANSFER/);
     assert.throws(() => resolveConfig(parseFlags([]), { MAX_USDC_PER_TRANSFER: "20", MAX_USDC_PER_RUN: "10" }, PKG), /cannot exceed/);

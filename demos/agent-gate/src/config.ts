@@ -6,7 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Caps, Mode, SimulationKind } from "./types";
+import type { Caps, Mode, ReceiptsSetting, SimulationKind } from "./types";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -37,6 +37,7 @@ export interface Flags {
   only?: string;
   interactive: boolean;
   simulate?: string;
+  receipts?: string;
 }
 
 export interface Config {
@@ -45,6 +46,8 @@ export interface Config {
   only: string | undefined;
   interactive: boolean;
   simulate: SimulationKind | undefined;
+  /** Mint a decision receipt for every proceed. Off in dry-run and on in live unless set. */
+  receipts: boolean;
   agentWallet: string | undefined;
   circleBin: string;
   /** Live only: how long one Circle CLI spawn may take before it is stopped and reported unknown. */
@@ -63,14 +66,18 @@ export const USAGE = `Usage: pnpm agent-gate [-- flags]
                         live spawns it for every proceed and needs AGENT_WALLET_ADDRESS plus
                         a Circle CLI testnet agent session on this machine
   --simulate <kind>     timeout | rate_limit | server_error: no request reaches Kyro, labelled SIMULATED (dry-run only)
+  --receipts <on|off>   mint a Kyro decision receipt for every proceed before the executor runs; the payment is
+                        held if the receipt disagrees with the read and refused if none could be minted
+                        (default off in dry-run, on in live)
   --interactive         on a hold, ask a human to approve the capped alternative (TTY only)
   --help                this text
 
 Environment (a .env file next to this package is read, existing variables win):
   AGENT_GATE_MODE, AGENT_WALLET_ADDRESS, CIRCLE_BIN, CIRCLE_TIMEOUT_MS, MAX_USDC_PER_TRANSFER,
-  MAX_USDC_PER_RUN, KYRO_TIMEOUT_MS, KYRO_MIN_INTERVAL_MS, AGENT_GATE_INTERACTIVE, AGENT_GATE_AUDIT_LOG`;
+  MAX_USDC_PER_RUN, KYRO_TIMEOUT_MS, KYRO_MIN_INTERVAL_MS, AGENT_GATE_RECEIPTS, AGENT_GATE_INTERACTIVE,
+  AGENT_GATE_AUDIT_LOG`;
 
-const VALUE_FLAGS = new Set(["tasks", "mode", "only", "simulate"]);
+const VALUE_FLAGS = new Set(["tasks", "mode", "only", "simulate", "receipts"]);
 const BOOLEAN_FLAGS = new Set(["interactive", "help"]);
 
 /** Parses process.argv.slice(2). A leading literal "--" (forwarded by pnpm) is dropped. */
@@ -108,6 +115,7 @@ export function parseFlags(argv: readonly string[]): Flags {
     if (name === "mode") flags.mode = value;
     if (name === "only") flags.only = value;
     if (name === "simulate") flags.simulate = value;
+    if (name === "receipts") flags.receipts = value;
   }
   return flags;
 }
@@ -170,6 +178,27 @@ function isSimulationKind(value: string): value is SimulationKind {
   return (SIMULATION_KINDS as readonly string[]).includes(value);
 }
 
+function isReceiptsSetting(value: string): value is ReceiptsSetting {
+  return value === "on" || value === "off";
+}
+
+/**
+ * Receipts are off in dry-run, where nothing is paid and a run is meant to
+ * cost nothing but reads. They are on in live, where every payment should
+ * leave a receipt behind. The flag wins over AGENT_GATE_RECEIPTS, which wins
+ * over that default.
+ */
+function resolveReceipts(flags: Flags, env: NodeJS.ProcessEnv, mode: Mode): boolean {
+  const fromEnv = env.AGENT_GATE_RECEIPTS?.trim();
+  const raw = flags.receipts ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
+  if (raw === undefined) return mode === "live";
+  if (!isReceiptsSetting(raw)) {
+    const source = flags.receipts !== undefined ? "--receipts" : "AGENT_GATE_RECEIPTS";
+    throw new ConfigError(`${source} must be on or off, got ${JSON.stringify(raw)}`);
+  }
+  return raw === "on";
+}
+
 export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: string): Config {
   const modeRaw = flags.mode ?? env.AGENT_GATE_MODE?.trim() ?? DEFAULTS.mode;
   if (modeRaw !== "dry-run" && modeRaw !== "live") {
@@ -186,6 +215,8 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
   if (mode === "live" && simulate !== undefined) {
     throw new ConfigError("--simulate is refused in live mode; simulated failures are for dry-run only");
   }
+
+  const receipts = resolveReceipts(flags, env, mode);
 
   const walletRaw = env.AGENT_WALLET_ADDRESS?.trim();
   let agentWallet: string | undefined;
@@ -216,6 +247,7 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
     only: flags.only,
     interactive: flags.interactive || readSwitch(env, "AGENT_GATE_INTERACTIVE"),
     simulate,
+    receipts,
     agentWallet,
     circleBin,
     circleTimeoutMs,

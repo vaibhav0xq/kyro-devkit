@@ -10,6 +10,13 @@
  * proposal. A later run of the same invoice reuses the key when the last
  * attempt ended unknown, so a manual retry after a reconcile resolves to
  * the same Circle transaction instead of a second payment.
+ *
+ * Receipts add one step between the final proceed and the executor: Kyro
+ * mints an immutable decision receipt for the recipient, the gate records
+ * it on the intent line and prints its URL. A receipt whose verdict or
+ * advisory limit disagrees with the read the policy used turns the proceed
+ * into a hold; a receipt Kyro could not mint turns it into a refuse. The
+ * executor runs only when the receipt agrees with the payment it documents.
  */
 import { randomUUID } from "node:crypto";
 import type { AuditLog } from "./audit";
@@ -24,18 +31,23 @@ import {
   renderOutcome,
   renderPolicy,
   renderProposal,
+  renderReceipt,
   renderSpawn,
+  usdc,
 } from "./render";
 import type { Out } from "./render";
 import type {
   Action,
   Assessment,
   Caps,
+  Condition,
   ExecutionResult,
   Executor,
+  MintedReceipt,
   Mode,
   PolicyDecision,
   Proposal,
+  ReceiptOutcome,
   RecentPayment,
 } from "./types";
 import { FROM_PLACEHOLDER } from "./circle";
@@ -50,6 +62,8 @@ export interface GateDeps {
   now: () => Date;
   caps: Caps;
   mode: Mode;
+  /** Mint a decision receipt for every proceed before the executor runs. */
+  receipts: boolean;
   runId: string;
   circleBin: string;
   /** How long the live executor waits for the CLI; shown next to the command. */
@@ -67,6 +81,10 @@ export interface GateOutcome {
   action: Action;
   approvedAmountUsdc: number | undefined;
   humanApproved: boolean;
+  /** Set when a receipt was minted for this proposal, also on a RECEIPT_MISMATCH hold. */
+  receipt: MintedReceipt | undefined;
+  /** Raised by the receipt step when it changed the action; the policy's own conditions stay in `policy`. */
+  receiptCondition: Condition | undefined;
   execution: ExecutionResult | undefined;
 }
 
@@ -107,6 +125,51 @@ export class GateInterruptedError extends Error {
 function isYes(answer: string): boolean {
   const normalised = answer.trim().toLowerCase();
   return normalised === "y" || normalised === "yes";
+}
+
+/**
+ * The condition a receipt step raises; undefined when the receipt agrees
+ * with the read and the amount about to be paid. The receipt is what a third
+ * party will see as the reason for this payment, so it has to say what the
+ * policy acted on: the same verdict and a limit the amount stays within.
+ */
+export function receiptCondition(
+  outcome: ReceiptOutcome,
+  readVerdict: Assessment | undefined,
+  amountUsdc: number,
+): Condition | undefined {
+  if (!outcome.ok) {
+    const retry = outcome.retryAfterSeconds !== undefined ? `, retry after ${outcome.retryAfterSeconds} s` : "";
+    return {
+      code: "RECEIPT_UNAVAILABLE",
+      action: "refuse",
+      message: `no decision receipt, ${outcome.failure.replace("_", " ")} (${outcome.detail})${retry}; nothing is paid without one`,
+    };
+  }
+  const { receipt } = outcome;
+  if (readVerdict === undefined || !readVerdict.ok) {
+    return {
+      code: "RECEIPT_MISMATCH",
+      action: "hold",
+      message: `receipt ${receipt.id} froze verdict ${receipt.verdict} but this proposal has no usable read to compare it with`,
+    };
+  }
+  const read = readVerdict.decision;
+  if (receipt.verdict !== read.decision) {
+    return {
+      code: "RECEIPT_MISMATCH",
+      action: "hold",
+      message: `receipt ${receipt.id} froze verdict ${receipt.verdict}, the read this run acted on said ${read.decision}; run again for a fresh read`,
+    };
+  }
+  if (amountUsdc > receipt.advisoryLimitUsdc) {
+    return {
+      code: "RECEIPT_MISMATCH",
+      action: "hold",
+      message: `receipt ${receipt.id} froze an advisory limit of ${usdc(receipt.advisoryLimitUsdc)}, below the ${usdc(amountUsdc)} about to be paid; run again for a fresh read`,
+    };
+  }
+  return undefined;
 }
 
 export async function runGate(deps: GateDeps, proposals: Proposal[]): Promise<GateRun> {
@@ -169,6 +232,22 @@ export async function runGate(deps: GateDeps, proposals: Proposal[]): Promise<Ga
         renderHumanAnswer(deps.out, humanApproved, capped);
       }
 
+      // Receipts: after the action is final and before anything is recorded
+      // or spawned. The receipt is minted for the payment as it will be made
+      // (a human's capped amount included) and has to agree with it.
+      let receipt: MintedReceipt | undefined;
+      let receiptIssue: Condition | undefined;
+      if (deps.receipts && action === "proceed" && approvedAmountUsdc !== undefined) {
+        const minted = await deps.kyro.receipt(normaliseAddress(proposal.to));
+        receiptIssue = receiptCondition(minted, assessment, approvedAmountUsdc);
+        if (minted.ok) receipt = minted.receipt;
+        renderReceipt(deps.out, minted, receiptIssue);
+        if (receiptIssue !== undefined) {
+          action = receiptIssue.action;
+          approvedAmountUsdc = undefined;
+        }
+      }
+
       const verdictFields = assessment?.ok
         ? {
             verdict: assessment.decision.decision,
@@ -216,10 +295,16 @@ export async function runGate(deps: GateDeps, proposals: Proposal[]): Promise<Ga
         approvedUsdc: approvedAmountUsdc ?? null,
         action,
         humanApproved,
-        conditions: policy.conditions.map((condition) => condition.code),
+        conditions: [...policy.conditions, ...(receiptIssue !== undefined ? [receiptIssue] : [])].map(
+          (condition) => condition.code,
+        ),
         ...verdictFields,
         simulated: assessment?.simulated ?? false,
         idempotencyKey: idempotencyKey ?? null,
+        receiptId: receipt?.id ?? null,
+        receiptPayloadHash: receipt?.payloadHash ?? null,
+        receiptDeduped: receipt?.deduped ?? null,
+        receiptUrl: receipt?.url ?? null,
       });
 
       let execution: ExecutionResult | undefined;
@@ -263,7 +348,17 @@ export async function runGate(deps: GateDeps, proposals: Proposal[]): Promise<Ga
       }
 
       renderOutcome(deps.out, action, execution, humanApproved);
-      outcomes.push({ proposal, assessment, policy, action, approvedAmountUsdc, humanApproved, execution });
+      outcomes.push({
+        proposal,
+        assessment,
+        policy,
+        action,
+        approvedAmountUsdc,
+        humanApproved,
+        receipt,
+        receiptCondition: receiptIssue,
+        execution,
+      });
     }
   } catch (error) {
     if (liveUnknowns > 0) throw new GateInterruptedError(error, liveUnknowns);

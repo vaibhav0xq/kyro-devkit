@@ -8,6 +8,9 @@ export const USE_CASE = "payment";
 
 export type Mode = "dry-run" | "live";
 
+/** `--receipts`: whether a proceed mints a Kyro decision receipt before the executor runs. */
+export type ReceiptsSetting = "on" | "off";
+
 export type SimulationKind = "timeout" | "rate_limit" | "server_error";
 
 /** One payment the planner wants to make. */
@@ -47,6 +50,33 @@ export type Assessment =
       rateLimit?: KyroRateLimitInfo;
     };
 
+/**
+ * A decision receipt Kyro minted for a proceed: the verdict frozen on the
+ * public receipt page, its hash and whether the same state was already
+ * minted today. `url` is absolute, ready to print and to store.
+ */
+export interface MintedReceipt {
+  id: string;
+  payloadHash: string;
+  deduped: boolean;
+  url: string;
+  createdAt: string;
+  verdict: KyroDecision["decision"];
+  advisoryLimitUsdc: number;
+}
+
+/** Result of one receipt creation. A failure carries the same taxonomy as a failed read. */
+export type ReceiptOutcome =
+  | { ok: true; receipt: MintedReceipt; rateLimit?: KyroRateLimitInfo }
+  | {
+      ok: false;
+      failure: FailureKind;
+      detail: string;
+      httpStatus?: number;
+      retryAfterSeconds?: number;
+      rateLimit?: KyroRateLimitInfo;
+    };
+
 /** What the operator policy does with a proposal. Never a Kyro word. */
 export type Action = "proceed" | "hold" | "refuse";
 
@@ -63,8 +93,15 @@ export type ConditionCode =
   | "OVER_ADVISORY_LIMIT"
   | "OVER_TRANSFER_CAP"
   | "RUN_BUDGET_EXCEEDED"
-  | "DUPLICATE_RECENT";
+  | "DUPLICATE_RECENT"
+  | "RECEIPT_MISMATCH"
+  | "RECEIPT_UNAVAILABLE";
 
+/**
+ * A triggered condition. The policy raises all but the last two; the gate
+ * raises RECEIPT_MISMATCH and RECEIPT_UNAVAILABLE after the policy said
+ * proceed, when the receipt step turns that proceed into a hold or a refuse.
+ */
 export interface Condition {
   code: ConditionCode;
   /** The action this condition forces on its own. */

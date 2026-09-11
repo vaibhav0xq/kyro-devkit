@@ -22,6 +22,7 @@ const header: HeaderInfo = {
   agentWallet: AGENT,
   simulate: undefined,
   interactive: false,
+  receipts: false,
 };
 
 const summary: SummaryInfo = {
@@ -32,6 +33,7 @@ const summary: SummaryInfo = {
   unknown: 0,
   kyroReads: 3,
   simulated: false,
+  receipts: { on: false, confirmed: 0, deduped: 0 },
   approvedUsdc: 1.5,
   caps: { maxUsdcPerTransfer: 5, maxUsdcPerRun: 10 },
   mode: "dry-run",
@@ -50,6 +52,20 @@ describe("renderHeader", () => {
     assert.match(live.text(), /^Kyro agent gate \(live\)/);
     assert.match(live.text(), /^circle\s+circle, one spawn per proceed with its own --idempotency-key, up to 240 s each, never retried$/m);
   });
+
+  it("says whether a proceed mints a receipt and, when off in dry-run, that live turns it on", () => {
+    const off = collectOut();
+    renderHeader(off.out, header);
+    assert.match(off.text(), /^receipts\s+off, no decision receipt is minted \(--receipts on to change that, the default in live mode\)$/m);
+
+    const liveOff = collectOut();
+    renderHeader(liveOff.out, { ...header, mode: "live" });
+    assert.match(liveOff.text(), /^receipts\s+off, no decision receipt is minted \(--receipts on to change that\)$/m);
+
+    const on = collectOut();
+    renderHeader(on.out, { ...header, receipts: true });
+    assert.match(on.text(), /^receipts\s+on, a decision receipt is minted for every proceed before anything is paid; no receipt, no payment$/m);
+  });
 });
 
 describe("renderSummary", () => {
@@ -61,5 +77,16 @@ describe("renderSummary", () => {
     const mixed = collectOut();
     renderSummary(mixed.out, { ...summary, mode: "live", proceeded: 0, failed: 1, unknown: 1 });
     assert.match(mixed.text(), /proceeded 0, held 2, refused 0, failed 1, unknown 1/);
+  });
+
+  it("counts minted receipts only when receipts were on", () => {
+    const off = collectOut();
+    renderSummary(off.out, summary);
+    assert.doesNotMatch(off.text(), /Receipts/);
+    assert.match(off.text(), /Kyro reads 3 \(1 anonymous rate unit each\)\. 1\.5 USDC approved/);
+
+    const on = collectOut();
+    renderSummary(on.out, { ...summary, receipts: { on: true, confirmed: 2, deduped: 1 } });
+    assert.match(on.text(), /Kyro reads 3 \(1 anonymous rate unit each\)\. Receipts 2 \(1 new, 1 deduped\)\. 1\.5 USDC approved/);
   });
 });

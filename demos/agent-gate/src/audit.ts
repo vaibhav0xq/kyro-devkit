@@ -37,6 +37,18 @@ export interface AuditIntent {
   simulated: boolean;
   /** Circle idempotency key for a live proceed, recorded before the spawn. Null otherwise. */
   idempotencyKey: string | null;
+  /**
+   * The decision receipt minted for this proposal when receipts are on and
+   * the policy said proceed, recorded before the executor runs. All null when
+   * receipts are off, when nothing was to be paid or when the creation
+   * failed (then `conditions` carries RECEIPT_UNAVAILABLE and the action is
+   * refuse). A receipt that disagreed with the read is still recorded, with
+   * RECEIPT_MISMATCH and a hold.
+   */
+  receiptId: string | null;
+  receiptPayloadHash: string | null;
+  receiptDeduped: boolean | null;
+  receiptUrl: string | null;
 }
 
 export interface AuditResult {

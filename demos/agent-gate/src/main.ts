@@ -3,9 +3,10 @@
  *
  * A scripted planner proposes USDC payments on Arc Testnet. Every proposal
  * passes through the gate: an anonymous Kyro decision read, the operator
- * policy, an audit line, then the executor. Dry-run, the default, prints the
- * exact Circle CLI command and runs nothing. Live spawns the Circle CLI once
- * per proceed and reports what it answered.
+ * policy, a decision receipt when receipts are on, an audit line, then the
+ * executor. Dry-run, the default, prints the exact Circle CLI command and
+ * runs nothing. Live spawns the Circle CLI once per proceed and reports what
+ * it answered.
  *
  * Exit codes: 0 the run completed (any mix of proceed, hold and refuse),
  * 1 configuration, task file or lock problem (also a live transfer the
@@ -25,13 +26,12 @@ import { LiveLockError, acquireLiveLock, createAuditLog, releaseLockQuietly } fr
 import { createCircleCliExecutor, createDryRunExecutor } from "./circle";
 import { ConfigError, USAGE, loadDotEnv, parseFlags, resolveConfig } from "./config";
 import { GateInterruptedError, runGate } from "./gate";
-import { createKyroGateway } from "./kyro";
+import { KYRO_BASE_URL, createKyroGateway } from "./kyro";
 import { TaskFileError, loadTaskList, plan } from "./planners/scripted";
 import { renderHeader, renderSummary } from "./render";
 import { CHAIN } from "./types";
 
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const KYRO_BASE_URL = "https://www.thekyro.co";
 
 const out = (line: string): void => {
   process.stdout.write(`${line}\n`);
@@ -100,6 +100,7 @@ async function run(config: ReturnType<typeof resolveConfig>): Promise<number> {
     agentWallet: config.agentWallet,
     simulate: config.simulate,
     interactive: prompt !== undefined,
+    receipts: config.receipts,
     ...(config.mode === "live" ? { circle: { bin: config.circleBin, timeoutMs: config.circleTimeoutMs } } : {}),
   });
 
@@ -124,6 +125,7 @@ async function run(config: ReturnType<typeof resolveConfig>): Promise<number> {
       now: () => new Date(),
       caps: config.caps,
       mode: config.mode,
+      receipts: config.receipts,
       runId: newRunId(),
       circleBin: config.circleBin,
       circleTimeoutMs: config.circleTimeoutMs,
@@ -140,6 +142,7 @@ async function run(config: ReturnType<typeof resolveConfig>): Promise<number> {
     unknown: run.unknown,
     kyroReads: kyro.readsMade,
     simulated: kyro.simulated,
+    receipts: { on: config.receipts, confirmed: kyro.receiptsConfirmed, deduped: kyro.receiptsDeduped },
     approvedUsdc: run.approvedUsdc,
     caps: config.caps,
     mode: config.mode,

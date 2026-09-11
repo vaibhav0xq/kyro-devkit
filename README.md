@@ -197,8 +197,8 @@ or refuse and every step lands in a JSONL audit log. Kyro never moves funds
 and never blocks a transaction; the agent's own policy does.
 
 ```
-planner  ->  pre-screen  ->  Kyro decision read  ->  operator policy  ->  audit  ->  executor
-             (no network)    (anonymous, 1 unit)    (proceed / hold / refuse)         (Circle CLI)
+planner  ->  pre-screen  ->  Kyro decision read  ->  operator policy  ->  decision receipt  ->  audit  ->  executor
+             (no network)    (anonymous, 1 unit)    (proceed / hold / refuse) (live or --receipts on)      (Circle CLI)
 ```
 
 ```bash
@@ -223,8 +223,12 @@ per proceed from an agent wallet you control, with an idempotency key, the
 CLI's JSON answer read into submitted, failed or unknown and reconcile steps
 printed after an unknown. It needs a Circle CLI testnet agent session and
 `AGENT_WALLET_ADDRESS` on your machine; nothing in this repository carries
-credentials. The demo README covers Windows, preflight, caps, the audit log
-and exit codes.
+credentials. In live mode (or with `--receipts on` in dry-run) every proceed
+also mints a Kyro decision receipt before the executor runs, printed as a
+share URL and recorded on the audit line; a receipt that disagrees with the
+read holds the payment and a receipt that cannot be minted refuses it. The
+demo README covers Windows, preflight, caps, receipts, the audit log and
+exit codes.
 
 The first live transfer through the gate ran on 9 September 2026 on Arc
 Testnet: 1.5 USDC, state `COMPLETE`, transaction

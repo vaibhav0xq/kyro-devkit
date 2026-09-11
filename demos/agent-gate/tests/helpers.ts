@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KyroDecision } from "@kyrodev/sdk";
+import type { KyroDecision, KyroReceipt, KyroReceiptCreateResult } from "@kyrodev/sdk";
 import { buildTransferArgv } from "../src/circle";
 import type { Assessment, ExecutionResult, Executor, FailureKind, Mode, Proposal, TransferRequest } from "../src/types";
 import { CHAIN } from "../src/types";
@@ -72,11 +72,39 @@ export function failedAssessment(failure: FailureKind): Assessment {
   return { ok: false, failure, detail: `${failure} detail`, simulated: false };
 }
 
-export function okJson(data: unknown, headers: Record<string, string> = {}): Response {
+export const RECEIPT_ID = "rcp_Zt3kQ9wXb2LmNpQr";
+export const PAYLOAD_HASH = "9f2c4e6a8b0d1f3e5a7c9b1d3f5e7a9c1b3d5f7e9a1c3b5d7f9e1a3c5b7d9f1e";
+
+/**
+ * A receipt creation answer shaped like the spec example: the decision
+ * payload without `coverage`, plus id, createdAt and payloadHash. Receipt
+ * field overrides apply to the frozen decision, the outer ones to the envelope data.
+ */
+export function receiptPayload(
+  receipt: Partial<KyroReceipt> = {},
+  outer: Partial<Omit<KyroReceiptCreateResult, "receipt">> = {},
+): KyroReceiptCreateResult {
+  const { coverage: _coverage, ...decision } = decisionPayload();
+  const frozen: KyroReceipt = {
+    id: RECEIPT_ID,
+    createdAt: "2026-09-07T10:00:03.000Z",
+    payloadHash: PAYLOAD_HASH,
+    ...decision,
+    ...receipt,
+  };
+  return { receipt: frozen, url: `/check/r/${frozen.id}`, deduped: false, ...outer };
+}
+
+export function okJson(data: unknown, headers: Record<string, string> = {}, status = 200): Response {
   return new Response(JSON.stringify({ ok: true, version: "v1", data }), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json", "x-ratelimit-limit": "20", "x-ratelimit-remaining": "19", ...headers },
   });
+}
+
+/** The 201 a newly minted receipt comes back with. */
+export function createdJson(data: unknown, headers: Record<string, string> = {}): Response {
+  return okJson(data, headers, 201);
 }
 
 export function errJson(

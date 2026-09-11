@@ -8,10 +8,12 @@ import type {
   Action,
   Assessment,
   Caps,
+  Condition,
   ExecutionResult,
   Mode,
   PolicyDecision,
   Proposal,
+  ReceiptOutcome,
   SimulationKind,
 } from "./types";
 import { ARCSCAN_BASE_URL, buildReconcileArgv, formatCommand } from "./circle";
@@ -46,6 +48,8 @@ export interface HeaderInfo {
   agentWallet: string | undefined;
   simulate: SimulationKind | undefined;
   interactive: boolean;
+  /** Whether a proceed mints a decision receipt before the executor runs. */
+  receipts: boolean;
   /** Live only: the CLI binary and how long each transfer may take. */
   circle?: { bin: string; timeoutMs: number };
 }
@@ -67,13 +71,21 @@ export function renderHeader(out: Out, info: HeaderInfo): void {
   out(
     row(
       "kyro",
-      `${info.baseUrl}, anonymous, timeout ${info.timeoutMs} ms, at least ${info.minIntervalMs} ms between reads`,
+      `${info.baseUrl}, anonymous, timeout ${info.timeoutMs} ms, at least ${info.minIntervalMs} ms between requests`,
     ),
   );
   out(row("audit", info.auditPath));
   if (info.simulate !== undefined) {
     out(row("simulate", `${info.simulate} (SIMULATED: no request reaches Kyro in this run)`));
   }
+  out(
+    row(
+      "receipts",
+      info.receipts
+        ? "on, a decision receipt is minted for every proceed before anything is paid; no receipt, no payment"
+        : `off, no decision receipt is minted (--receipts on to change that${info.mode === "dry-run" ? ", the default in live mode" : ""})`,
+    ),
+  );
   out(row("human", info.interactive ? "holds prompt for a capped approval" : "holds are not prompted (run with --interactive)"));
   out("");
 }
@@ -157,6 +169,27 @@ export function renderPolicy(out: Out, policy: PolicyDecision, interactive: bool
 
 export function renderHumanAnswer(out: Out, approved: boolean, amountUsdc: number): void {
   out(row("human", approved ? `approved ${usdc(amountUsdc)}` : "declined, nothing is paid"));
+}
+
+/**
+ * The receipt step. A minted receipt is shown with its share URL whatever
+ * happens next; the condition line, when there is one, names why the proceed
+ * became a hold or a refuse.
+ */
+export function renderReceipt(out: Out, outcome: ReceiptOutcome, condition: Condition | undefined): void {
+  if (outcome.ok) {
+    const { receipt } = outcome;
+    out(row("receipt", `${receipt.id} (${receipt.deduped ? "deduped, same decision state minted earlier today" : "new"}), ${receipt.url}`));
+    out(cont(`verdict ${receipt.verdict}, limit ${usdc(receipt.advisoryLimitUsdc)} advisory, payload hash ${receipt.payloadHash}`));
+  } else {
+    out(row("receipt", "not minted"));
+  }
+  if (condition !== undefined) {
+    out(cont(`${condition.action}: ${condition.message} (${condition.code})`));
+  }
+  if (outcome.rateLimit?.remaining !== undefined) {
+    out(row("budget", `${outcome.rateLimit.remaining}/${outcome.rateLimit.limit ?? "?"} rate units left this minute`));
+  }
 }
 
 /** Live only: a retry of an invoice whose last attempt ended unknown carries the same key. */
@@ -251,6 +284,8 @@ export interface SummaryInfo {
   unknown: number;
   kyroReads: number;
   simulated: boolean;
+  /** Receipts Kyro confirmed in this run and how many were deduped. Only printed when receipts were on. */
+  receipts: { on: boolean; confirmed: number; deduped: number };
   approvedUsdc: number;
   caps: Caps;
   mode: Mode;
@@ -263,8 +298,11 @@ export function renderSummary(out: Out, summary: SummaryInfo): void {
   const reads = summary.simulated
     ? "Kyro reads 0 (every read in this run was SIMULATED)"
     : `Kyro reads ${summary.kyroReads} (1 anonymous rate unit each)`;
+  const receipts = summary.receipts.on
+    ? ` Receipts ${summary.receipts.confirmed} (${summary.receipts.confirmed - summary.receipts.deduped} new, ${summary.receipts.deduped} deduped).`
+    : "";
   const budget = `${usdc(summary.approvedUsdc)} approved of the ${usdc(summary.caps.maxUsdcPerRun)} run budget`;
   const mode = summary.mode === "dry-run" ? "dry-run, nothing was submitted" : "live";
-  out(row("summary", `${counts}. ${reads}. ${budget}. Mode ${mode}.`));
+  out(row("summary", `${counts}. ${reads}.${receipts} ${budget}. Mode ${mode}.`));
   out(row("audit", summary.auditPath));
 }

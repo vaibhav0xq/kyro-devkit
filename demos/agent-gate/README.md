@@ -5,8 +5,8 @@ Kyro in the approval path. Every payment the planner proposes passes through
 one gate before anything is submitted:
 
 ```
-planner  ->  pre-screen  ->  Kyro decision read  ->  operator policy  ->  audit  ->  executor
-             (no network)    (anonymous, 1 unit)    (proceed / hold / refuse)         (Circle CLI)
+planner  ->  pre-screen  ->  Kyro decision read  ->  operator policy  ->  decision receipt  ->  audit  ->  executor
+             (no network)    (anonymous, 1 unit)    (proceed / hold / refuse) (live or --receipts on)      (Circle CLI)
 ```
 
 Kyro answers with a verdict (allow, caution or block), an advisory USDC limit,
@@ -26,8 +26,9 @@ transaction
 `0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873`
 ([explorer](https://testnet.arcscan.app/tx/0xe855692eff6927a7711c7dc483db6b82c4132d29eadbdd63f8a49165fe14f873)).
 One spawn with the run's own idempotency key, nothing retried; inv-002 and
-inv-003 have not been run live. The test suite still uses a stand-in binary
-and never reaches Circle. Decision receipts and a model-driven planner remain
+inv-003 have not been run live. That transfer predates decision receipts in
+the gate; no receipted live run has happened yet. The test suite still uses a
+stand-in binary and never reaches Circle. A model-driven planner remains
 planned, see [`CHANGELOG-ETHONLINE.md`](../../CHANGELOG-ETHONLINE.md).
 
 ## Run it
@@ -48,7 +49,9 @@ Three scenes in [`tasks/invoices.example.json`](./tasks/invoices.example.json):
 | inv-002 | 2 USDC to a wallet Kyro has never indexed | caution, `indexing_required` baseline | hold |
 | inv-003 | 1200 USDC to the same identity as inv-001 | allow, above the advisory limit | hold, offers a capped alternative |
 
-A run costs three anonymous rate units against the live API.
+A run costs three anonymous rate units against the live API, plus one
+receipt creation per proceed when receipts are on (off by default in
+dry-run, see [Decision receipts](#decision-receipts)).
 
 Watch the gate fail closed without touching the network:
 
@@ -56,6 +59,7 @@ Watch the gate fail closed without touching the network:
 pnpm agent-gate -- --simulate timeout        # also rate_limit, server_error
 pnpm agent-gate -- --only inv-002            # one scene
 pnpm agent-gate -- --interactive             # a human may approve the capped amount on a hold
+pnpm agent-gate -- --receipts on             # mint a decision receipt for the proceed, dry-run included
 pnpm agent-gate -- --help
 ```
 
@@ -150,6 +154,8 @@ AGENT_WALLET_ADDRESS=0x... pnpm agent-gate -- --mode live --only inv-001
 ### What a live proceed prints
 
 ```
+receipt     rcp_Zt3kQ9wXb2LmNpQr (new), https://www.thekyro.co/check/r/rcp_Zt3kQ9wXb2LmNpQr
+            verdict allow, limit 1000 USDC advisory, payload hash 9f2c6b0e4d1a7c3f8b5e2d9a1c4f7e0b3d6a9c2e5f8b1d4a7c0e3f6b9d2a5c8e
 executor    circle wallet transfer 0xbb30...3252 --amount 1.5 --address 0x1a1a...1a1a --chain ARC-TESTNET --idempotency-key 3f2a9c1e-... --output json
             waiting for the Circle CLI, it answers once the transfer reaches a terminal state (up to 240 s)
 tx          0xabab...abab (CONFIRMED), https://testnet.arcscan.app/tx/0xabab...abab
@@ -254,12 +260,51 @@ left of the run budget.
 The operator caps live in the agent because Circle spending policies are
 mainnet only.
 
+## Decision receipts
+
+A receipt is Kyro's immutable record of one decision state: verdict,
+advisory limit, reasons, evidence, freshness and model version, hashed and
+published at a URL anyone can open without an account. With receipts on,
+the gate mints one for every proceed after the policy (and, on a hold, the
+human) has settled the action and before the audit line and the executor.
+The receipt is for the recipient wallet and the payment use case, created
+anonymously through `@kyrodev/sdk`, the same client and throttle as the
+read. The output prints the receipt id, whether it is new or deduped (Kyro
+returns the same receipt when an identical decision state was already
+minted that day) and the share URL. The intent line in the audit log records
+`receiptId`, `receiptPayloadHash`, `receiptDeduped` and `receiptUrl`.
+
+Two things can go wrong and both keep the money where it is:
+
+- The receipt disagrees with the read the policy acted on: a different
+  verdict or an advisory limit below the amount about to be paid, which can
+  happen when Kyro's evidence changed between the read and the mint. The
+  proceed becomes a hold with `RECEIPT_MISMATCH`. The hold is not offered to
+  a human in that run; run again for a fresh read.
+- The receipt could not be minted: timeout, rate limit, server error, network
+  failure, an answer for another wallet or a malformed payload. The proceed
+  becomes a refuse with `RECEIPT_UNAVAILABLE`. No receipt, no payment.
+
+In both cases the intent line carries the receipt's fields when one exists
+and `null` otherwise, the action it records is the hold or the refuse, and
+no idempotency key is assigned, so nothing is spawned and nothing counts as
+an earlier payment for the duplicate guard.
+
+Receipts are on by default in live mode and off by default in dry-run, where
+nothing is paid and a run is meant to cost nothing but reads. `--receipts on`
+or `--receipts off` sets it either way, as does `AGENT_GATE_RECEIPTS`; the
+flag wins. Each receipt spends one anonymous rate unit plus a slot in the
+receipt creation budget documented in the public spec. A deduped receipt is
+still one creation request. With `--simulate` every read fails, so no proceed
+is reached and nothing is minted, whatever the setting.
+
 ## Audit log
 
 Every proposal appends an `intent` line to `agent-gate.audit.log` (JSONL,
 gitignored) once its action is final: the request, the verdict and advisory
 limit, freshness, the decision model version, the action, every condition,
-whether a human approved and, for a live proceed, the idempotency key
+whether a human approved, for a live proceed the idempotency key and, when
+a receipt was minted, its id, payload hash, deduped flag and share URL
 (`null` otherwise). Every executor call appends a `result` line with the
 argv and, in live mode, the state (`submitted`, `failed` or `unknown`), the
 transaction hash, the Circle transaction id, the error code and the key.
@@ -282,7 +327,7 @@ nothing moved. Live intents and results all do, including `failed` and
 src/main.ts              entry: flags, env, wiring, exit codes
 src/config.ts            flags, environment, .env loader
 src/planners/scripted.ts task file loader and validation
-src/kyro.ts              decision read through @kyrodev/sdk, throttle, failure mapping, simulations
+src/kyro.ts              decision read and receipt creation through @kyrodev/sdk, throttle, failure mapping, simulations
 src/policy.ts            pre-screen, decision, capped alternative (pure)
 src/circle.ts            Circle CLI argv builder, the dry-run executor, the live executor and its output reader
 src/audit.ts             JSONL audit log and the duplicate-guard reader

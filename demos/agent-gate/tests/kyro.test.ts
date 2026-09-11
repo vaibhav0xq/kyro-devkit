@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createKyroGateway, findDecisionDefect, simulatedFetch } from "../src/kyro";
-import { BUILDER, FRESH, baselinePayload, decisionPayload, errJson, hangingAnswer, mockFetch, okJson } from "./helpers";
+import { KYRO_BASE_URL, createKyroGateway, findDecisionDefect, findReceiptDefect, simulatedFetch } from "../src/kyro";
+import {
+  BUILDER,
+  FRESH,
+  OTHER,
+  PAYLOAD_HASH,
+  RECEIPT_ID,
+  baselinePayload,
+  createdJson,
+  decisionPayload,
+  errJson,
+  hangingAnswer,
+  mockFetch,
+  okJson,
+  receiptPayload,
+} from "./helpers";
 
 function gateway(fetch: typeof globalThis.fetch, extra: Partial<Parameters<typeof createKyroGateway>[0]> = {}) {
   return createKyroGateway({ timeoutMs: 50, minIntervalMs: 0, fetch, ...extra });
@@ -128,6 +142,139 @@ describe("kyro gateway", () => {
   });
 });
 
+describe("kyro gateway: receipts", () => {
+  it("posts the wallet and the payment use case anonymously and returns the minted receipt", async () => {
+    const { fetch, calls } = mockFetch(createdJson(receiptPayload()));
+    const kyro = gateway(fetch);
+    const outcome = await kyro.receipt(BUILDER);
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.deepEqual(outcome.receipt, {
+      id: RECEIPT_ID,
+      payloadHash: PAYLOAD_HASH,
+      deduped: false,
+      url: `${KYRO_BASE_URL}/check/r/${RECEIPT_ID}`,
+      createdAt: "2026-09-07T10:00:03.000Z",
+      verdict: "allow",
+      advisoryLimitUsdc: 1000,
+    });
+    assert.deepEqual(outcome.rateLimit, { limit: 20, remaining: 19 });
+    assert.equal(kyro.receiptsConfirmed, 1);
+    assert.equal(kyro.readsMade, 0);
+    assert.equal(calls.length, 1);
+    const call = calls[0];
+    assert.ok(call !== undefined);
+    assert.equal(call.url, "https://www.thekyro.co/api/v1/decision-receipts");
+    assert.equal(call.init.method, "POST");
+    assert.deepEqual(JSON.parse(String(call.init.body)), { wallet: BUILDER, useCase: "payment" });
+    const headers = new Headers(call.init.headers);
+    assert.equal(headers.get("authorization"), null);
+    assert.equal(headers.get("x-api-key"), null);
+    assert.equal(headers.get("content-type"), "application/json");
+  });
+
+  it("returns a deduped receipt (200) as ok with deduped set", async () => {
+    const { fetch } = mockFetch(okJson(receiptPayload({}, { deduped: true })));
+    const kyro = gateway(fetch);
+    const outcome = await kyro.receipt(BUILDER);
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.receipt.deduped, true);
+    assert.equal(kyro.receiptsConfirmed, 1);
+    assert.equal(kyro.receiptsDeduped, 1);
+  });
+
+  it("maps failures the same way as a read and mints nothing", async () => {
+    const cases: Array<[Parameters<typeof mockFetch>[0], string, number | undefined]> = [
+      [errJson("RATE_LIMITED", "slow down", 429, { "retry-after": "30" }), "rate_limit", 30],
+      [errJson("INTERNAL_ERROR", "boom", 503), "server_error", undefined],
+      [errJson("VALIDATION_ERROR", "bad wallet", 400), "api_error", undefined],
+      [hangingAnswer(), "timeout", undefined],
+      [new Response("<html>", { status: 201, headers: { "content-type": "text/html" } }), "bad_response", undefined],
+    ];
+    for (const [answer, failure, retryAfter] of cases) {
+      const { fetch } = mockFetch(answer);
+      const kyro = gateway(fetch);
+      const outcome = await kyro.receipt(BUILDER);
+      assert.equal(outcome.ok, false, failure);
+      if (outcome.ok) continue;
+      assert.equal(outcome.failure, failure);
+      assert.equal(outcome.retryAfterSeconds, retryAfter);
+      assert.equal(kyro.receiptsConfirmed, 0);
+    }
+  });
+
+  it("treats a receipt for another wallet, use case or with missing fields as bad_response", async () => {
+    const cases: Array<[unknown, string]> = [
+      [receiptPayload({ wallet: OTHER }), "receipt.wallet (receipt is for a different wallet)"],
+      [receiptPayload({ useCase: "escrow" }), "receipt.useCase (receipt is for a different use case)"],
+      [{ ...receiptPayload(), url: "https://www.thekyro.co/check/r/x" }, "url"],
+      [{ ...receiptPayload(), url: `//evil.example/check/r/${RECEIPT_ID}` }, "url"],
+      [{ ...receiptPayload(), url: `/\\evil.example/check/r/${RECEIPT_ID}` }, "url"],
+      [{ ...receiptPayload(), url: `/check/r/${RECEIPT_ID}?x=1` }, "url"],
+      [{ ...receiptPayload(), url: "/check/r/rcp_someoneElse00000" }, "url"],
+      [{ ...receiptPayload(), url: "//[" }, "url"],
+      [{ ...receiptPayload(), deduped: "no" }, "deduped"],
+      [receiptPayload({ id: "rcp_short" }), "receipt.id"],
+      [receiptPayload({ payloadHash: "abc" }), "receipt.payloadHash"],
+      [receiptPayload({ decision: "maybe" as never }), "receipt.decision"],
+      [receiptPayload({ recommendedLimit: { amountUsdc: -1, currency: "USDC", basis: "allow" } }), "receipt.recommendedLimit.amountUsdc"],
+    ];
+    for (const [data, defect] of cases) {
+      const { fetch } = mockFetch(createdJson(data));
+      const kyro = gateway(fetch);
+      const outcome = await kyro.receipt(BUILDER);
+      assert.equal(outcome.ok, false, defect);
+      if (outcome.ok) continue;
+      assert.equal(outcome.failure, "bad_response");
+      assert.equal(outcome.detail, `receipt payload is missing or malformed at ${defect}`);
+      assert.equal(kyro.receiptsConfirmed, 0);
+    }
+  });
+
+  it("never throws into the caller", async () => {
+    const kyro = gateway((async () => {
+      throw new TypeError("fetch failed");
+    }) as typeof globalThis.fetch);
+    const outcome = await kyro.receipt(BUILDER);
+    assert.equal(outcome.ok, false);
+    if (!outcome.ok) assert.equal(outcome.failure, "network");
+  });
+
+  it("shares the minimum interval with reads", async () => {
+    const slept: number[] = [];
+    let clock = 1000;
+    const { fetch } = mockFetch(okJson(decisionPayload()), createdJson(receiptPayload()), okJson(decisionPayload()));
+    const kyro = createKyroGateway({
+      timeoutMs: 50,
+      minIntervalMs: 1500,
+      fetch,
+      now: () => clock,
+      sleep: async (ms) => {
+        slept.push(ms);
+        clock += ms;
+      },
+    });
+    await kyro.assess(BUILDER);
+    clock += 200;
+    await kyro.receipt(BUILDER);
+    clock += 300;
+    await kyro.assess(BUILDER);
+    assert.deepEqual(slept, [1300, 1200]);
+    assert.equal(kyro.readsMade, 2);
+    assert.equal(kyro.receiptsConfirmed, 1);
+  });
+
+  it("goes through the simulated fetch when simulating, so nothing can leak to the network", async () => {
+    const { fetch, calls } = mockFetch(createdJson(receiptPayload()));
+    const kyro = createKyroGateway({ timeoutMs: 50, minIntervalMs: 0, simulate: "server_error", fetch });
+    const outcome = await kyro.receipt(BUILDER);
+    assert.equal(outcome.ok, false);
+    assert.equal(calls.length, 0);
+    assert.equal(kyro.receiptsConfirmed, 0);
+  });
+});
+
 describe("simulated failures", () => {
   it("timeout rejects on abort so the SDK deadline fires", async () => {
     const kyro = createKyroGateway({ timeoutMs: 40, minIntervalMs: 1500, simulate: "timeout" });
@@ -168,6 +315,20 @@ describe("simulated failures", () => {
     const kyro = createKyroGateway({ timeoutMs: 50, minIntervalMs: 0, simulate: "server_error", fetch });
     await kyro.assess(BUILDER);
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("findReceiptDefect", () => {
+  it("accepts the spec example shape and a differently cased wallet", () => {
+    assert.equal(findReceiptDefect(receiptPayload(), BUILDER), undefined);
+    assert.equal(findReceiptDefect(receiptPayload({}, { deduped: true }), BUILDER.toUpperCase().replace("0X", "0x")), undefined);
+  });
+
+  it("names the first defect", () => {
+    assert.equal(findReceiptDefect(null, BUILDER), "payload is not an object");
+    assert.equal(findReceiptDefect({ url: "/check/r/x", deduped: false }, BUILDER), "receipt");
+    assert.equal(findReceiptDefect(receiptPayload({ createdAt: "yesterday" }), BUILDER), "receipt.createdAt");
+    assert.equal(findReceiptDefect(receiptPayload({ recommendedLimit: undefined as never }), BUILDER), "receipt.recommendedLimit");
   });
 });
 

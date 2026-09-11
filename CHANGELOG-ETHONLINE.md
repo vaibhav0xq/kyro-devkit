@@ -137,6 +137,24 @@ Source: the private product repository, not part of this submission.
   list and compatibility notes. Root `package.json` gained author, bugs and
   keywords. No code, spec or dependency change; the published 0.1.0 package
   is untouched.
+- 2026-09-12: Agent gate demo, decision receipts inside the run. With
+  receipts on (the default in live mode, `--receipts on` in dry-run) a
+  proceed mints a Kyro decision receipt for the recipient through
+  `@kyrodev/sdk` after the policy and any human approval have settled the
+  action and before the audit line and the executor. The output prints the
+  receipt id, whether it is new or deduped and the share URL; the intent
+  line records `receiptId`, `receiptPayloadHash`, `receiptDeduped` and
+  `receiptUrl`. A receipt whose verdict or advisory limit disagrees with the
+  read turns the proceed into a hold (`RECEIPT_MISMATCH`, not offered to a
+  human in that run); a receipt Kyro could not mint turns it into a refuse
+  (`RECEIPT_UNAVAILABLE`), so no receipt means no payment. Receipt creation
+  shares the read's throttle and failure mapping and is checked for wallet,
+  use case and shape before it counts. `AGENT_GATE_RECEIPTS` is the
+  environment twin of the flag. Tests use the fake fetch only: mint order,
+  audit fields, mismatch and failure paths, live mode with the idempotency
+  key, the simulate path minting nothing, flag parsing and the CLI. No live
+  transfer was made for this entry; the 9 September transfer predates it.
+  Changes are confined to `demos/agent-gate` and this file.
 
 ## AI assistance (disclosed)
 
@@ -148,8 +166,8 @@ maintainer's. The same statement is on the ETHGlobal submission form.
 
 ## Planned (not yet done, listed so the plan is public)
 
-- Agent gate demo, next steps: decision receipts inside the run and a
-  model-driven planner. The first live transfer is in the dated list above.
+- Agent gate demo, next step: a model-driven planner. The first live
+  transfer and the decision receipts are in the dated list above.
 - Slides for live judging, if Kyro is selected for round 2.
 - Demo video.
 - Arc mainnet activation on 16 September 2026, after the submission

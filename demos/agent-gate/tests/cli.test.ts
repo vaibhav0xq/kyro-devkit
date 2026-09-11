@@ -55,6 +55,8 @@ describe("cli", () => {
     assert.equal(result.code, 0);
     assert.match(result.stdout, /^Usage: pnpm agent-gate/);
     assert.match(result.stdout, /--simulate <kind>/);
+    assert.match(result.stdout, /--receipts <on\|off>/);
+    assert.match(result.stdout, /AGENT_GATE_RECEIPTS/);
   });
 
   it("--mode live without AGENT_WALLET_ADDRESS exits 1 before reading or spawning anything", async () => {
@@ -88,10 +90,11 @@ describe("cli", () => {
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /^Kyro agent gate \(live\)/);
     assert.match(result.stdout, /circle\s+.*circle-that-does-not-exist, one spawn per proceed with its own --idempotency-key, up to 1 s each, never retried/);
+    assert.match(result.stdout, /^receipts\s+on, a decision receipt is minted for every proceed/m);
     assert.match(result.stdout, /RECIPIENT_IS_AGENT_WALLET/);
     assert.match(result.stdout, /refused, no payment/);
-    assert.match(result.stdout, /Kyro reads 0/);
-    assert.doesNotMatch(result.stdout, /executor|SPAWN_FAILED|--idempotency-key <|tx\s/);
+    assert.match(result.stdout, /Kyro reads 0 \(1 anonymous rate unit each\)\. Receipts 0 \(0 new, 0 deduped\)\./);
+    assert.doesNotMatch(result.stdout, /executor|SPAWN_FAILED|--idempotency-key <|tx\s|^receipt\s/m);
     const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
     assert.equal(lines.length, 1);
     const entry = JSON.parse(lines[0] ?? "{}") as { type: string; mode: string; action: string; idempotencyKey: unknown };
@@ -119,10 +122,37 @@ describe("cli", () => {
   });
 
   it("an unknown flag exits 1 and shows usage", async () => {
-    const result = await cli(["--receipts"]);
+    const result = await cli(["--verbose"]);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /unknown flag --receipts/);
+    assert.match(result.stderr, /unknown flag --verbose/);
     assert.match(result.stderr, /Usage:/);
+  });
+
+  it("--receipts takes on or off and nothing else", async () => {
+    const bare = await cli(["--receipts"]);
+    assert.equal(bare.code, 1);
+    assert.match(bare.stderr, /--receipts needs a value/);
+    assert.equal(bare.stdout, "");
+
+    const wrong = await cli(["--receipts", "maybe"]);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /--receipts must be on or off, got "maybe"/);
+    assert.equal(wrong.stdout, "");
+  });
+
+  it("--simulate with --receipts on still refuses every scene and mints nothing", async () => {
+    const result = await cli(["--simulate", "server_error", "--receipts", "on"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^receipts\s+on, a decision receipt is minted for every proceed/m);
+    assert.match(result.stdout, /summary\s+proceeded 0, held 0, refused 3\. Kyro reads 0 \(every read in this run was SIMULATED\)\. Receipts 0 \(0 new, 0 deduped\)\./);
+    assert.doesNotMatch(result.stdout, /^receipt\s/m);
+  });
+
+  it("dry-run says receipts are off by default and mints nothing", async () => {
+    const result = await cli(["--simulate", "timeout", "--only", "inv-001"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^receipts\s+off, no decision receipt is minted \(--receipts on to change that, the default in live mode\)$/m);
+    assert.doesNotMatch(result.stdout, /Receipts \d/);
   });
 
   it("a missing task file exits 1", async () => {
