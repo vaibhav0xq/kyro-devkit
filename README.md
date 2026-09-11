@@ -191,9 +191,9 @@ CHANGELOG-ETHONLINE.md   pre-existing work versus event-window work
 
 ## ETHOnline 2026
 
-Submitted to the Arc tracks Launch on Arc Testnet and Push to Mainnet and
-Best Agentic Economy with Circle Agent Stack. The dated split between
-pre-existing work and event-window work lives in
+Submitted on the ETHGlobal Continuity Track to Arc's Best DeFi or Agentic
+Application prize, with the agent gate as the agentic case. The dated split
+between pre-existing work and event-window work lives in
 [`CHANGELOG-ETHONLINE.md`](./CHANGELOG-ETHONLINE.md).
 
 ## Links

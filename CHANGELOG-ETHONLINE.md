@@ -4,9 +4,9 @@ ETHGlobal judges only event-window work. This file separates what existed
 before the hacking window opened from what was built inside it, so nothing
 pre-existing is presented as new.
 
-Tracks: Arc, Launch on Arc Testnet and Push to Mainnet (primary). Arc, Best
-Agentic Economy with Circle Agent Stack (secondary, same open-source
-artifact).
+Track: ETHGlobal Continuity Track. Partner prize: Arc, Best DeFi or Agentic
+Application (the Continuity prize), entered on the agentic side with the
+agent gate.
 
 ## Pre-existing before 4 September 2026 (disclosed, not judged)
 
@@ -31,7 +31,7 @@ artifact).
 
 Source: the private product repository, not part of this submission.
 
-## Event window, 4 to 16 September 2026 (judged)
+## Event window, 4 to 13 September 2026 (judged; submissions close 13 September, 12:00 pm EDT)
 
 - 2026-09-06: Public devkit repository scaffolded (this repository). SDK
   extracted from the private repository into `packages/sdk` with its tests,
@@ -117,15 +117,22 @@ Source: the private product repository, not part of this submission.
   live. No code change: this file, the status paragraph of
   `demos/agent-gate/README.md` and one sentence of the root README are the
   only edits.
+- 2026-09-11: Correction. Arc replaced its prize list during the event and
+  the Launch on Arc Testnet and Push to Mainnet track no longer exists. The
+  tracks line above and the README now name the ETHGlobal Continuity Track
+  and Arc's Best DeFi or Agentic Application prize. The window heading now
+  ends on the submission deadline, 13 September, instead of 16 September,
+  which is the mainnet activation date. No code change.
 
-## Planned inside the window (not yet done, listed so the plan is public)
+## Planned (not yet done, listed so the plan is public)
 
 - Agent gate demo, next steps: decision receipts inside the run and a
   model-driven planner. The first live transfer is in the dated list above.
-- Architecture diagram export and two submission slides.
+- Slides for live judging, if Kyro is selected for round 2.
 - Demo video.
-- Arc mainnet activation on 16 September 2026 with evidence links (live URL
-  serving Arc mainnet and the first verified mainnet attestation
-  transaction). Arc accepts mainnet evidence until 30 September 2026.
+- Arc mainnet activation on 16 September 2026, after the submission
+  deadline. Arc accepts mainnet evidence until 30 September 2026; the live
+  URL serving Arc mainnet and the first verified mainnet attestation
+  transaction will be added here when it happens.
 
 Entries move from this section to the dated list above only when they ship.
