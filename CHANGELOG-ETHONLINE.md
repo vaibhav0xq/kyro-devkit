@@ -123,6 +123,28 @@ Source: the private product repository, not part of this submission.
   and Arc's Best DeFi or Agentic Application prize. The window heading now
   ends on the submission deadline, 13 September, instead of 16 September,
   which is the mainnet activation date. No code change.
+- 2026-09-11: Repository housekeeping, docs only. Root README rewritten
+  around a header image, a contents list, a rendered frame of the 7 September
+  dry-run (`docs/agent-gate-dry-run.png`, from the same captured output as
+  the video), the architecture board, a disclaimers and trademarks section
+  and a links table; the claim that every example runs without credentials
+  now says read examples and the default dry-run, since live mode needs the
+  operator's wallet and Circle CLI session. Added `CONTRIBUTING.md`,
+  `SECURITY.md` (email reporting), `.editorconfig` and the AI assistance
+  section below. `packages/sdk/README.md` expanded into a
+  guide: configuration table, response shapes, error classes and codes,
+  timeouts and cancellation, rate limits, low-level requests, the full export
+  list and compatibility notes. Root `package.json` gained author, bugs and
+  keywords. No code, spec or dependency change; the published 0.1.0 package
+  is untouched.
+
+## AI assistance (disclosed)
+
+Replit Agent was used as a coding assistant during the event window:
+planning, notes, implementation support and review of code and copy across
+this repository, under the maintainer's direction. Design decisions, the
+Circle CLI session, the live transfer and the review of every commit were the
+maintainer's. The same statement is on the ETHGlobal submission form.
 
 ## Planned (not yet done, listed so the plan is public)
 
