@@ -4,11 +4,28 @@
   "private": true,
   "description": "Public devkit for Kyro, the pre-transaction decision layer for wallets on Arc: TypeScript SDK, OpenAPI snapshot, examples and docs.",
   "license": "MIT",
+  "author": "Kyro",
   "homepage": "https://www.thekyro.co",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vaibhav0xq/kyro-devkit.git"
   },
+  "bugs": {
+    "url": "https://github.com/vaibhav0xq/kyro-devkit/issues"
+  },
+  "keywords": [
+    "kyro",
+    "arc",
+    "usdc",
+    "circle",
+    "wallet",
+    "counterparty",
+    "risk",
+    "decision",
+    "sdk",
+    "openapi",
+    "agent"
+  ],
   "engines": {
     "node": ">=18.17",
     "pnpm": ">=9"
