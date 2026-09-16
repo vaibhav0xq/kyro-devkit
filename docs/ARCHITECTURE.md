@@ -38,7 +38,7 @@ flowchart LR
   end
 
   subgraph chains [Chains]
-    arc[Arc RPC<br/>testnet today, mainnet activation planned]
+    arc[Arc RPC<br/>mainnet primary since 16 Sep 2026,<br/>testnet kept as history]
     ctx[Context readers<br/>Ethereum, Base, Arbitrum, Polygon, BNB]
   end
 
@@ -93,10 +93,10 @@ attestations, claimed identities and chain snapshots. Snapshots are tagged
 with the chain they came from, which is what lets testnet and mainnet
 evidence coexist without mixing.
 
-**Chains.** Arc is the settlement chain and the home of the product: today
-Arc Testnet, with Arc mainnet activation planned for 16 September 2026
-through a registry switch that fails closed if mainnet configuration is
-incomplete. Read-only context readers for Ethereum, Base, Arbitrum, Polygon
+**Chains.** Arc is the settlement chain and the home of the product: Arc
+mainnet is the primary network since 16 September 2026, switched on through a
+registry that fails closed if mainnet configuration is incomplete, with Arc
+Testnet rows kept as labeled history. Read-only context readers for Ethereum, Base, Arbitrum, Polygon
 and BNB Chain add cross-chain history to the picture; Arc remains the chain
 where identities are claimed and attestations settle.
 

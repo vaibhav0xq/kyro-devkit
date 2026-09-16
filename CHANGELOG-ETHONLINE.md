@@ -155,6 +155,24 @@ Source: the private product repository, not part of this submission.
   key, the simulate path minting nothing, flag parsing and the CLI. No live
   transfer was made for this entry; the 9 September transfer predates it.
   Changes are confined to `demos/agent-gate` and this file.
+- 2026-09-12: Demo video recorded and attached to the ETHGlobal submission.
+  No code change.
+
+## After the window (not judged)
+
+- 2026-09-16: Kyro on Arc mainnet. Arc mainnet launched on 16 September 2026
+  and the production deployment at https://www.thekyro.co was switched the
+  same day: production migration first, then the mainnet configuration trio,
+  then a redeploy. The smoke checks passed the same day: coverage rows named
+  `Arc` for mainnet, `Arc Testnet` kept as labeled history, decision receipts
+  minting and explorer links on explorer.arc.io. Arc evidence restarts at
+  zero for every wallet, so Arc-side scores re-base on the next refresh. No
+  code change: the dual-chain machinery listed under pre-existing work was
+  activated by configuration. Docs only in this repository: the status and
+  disclaimer sections of the root README, the sample answers (re-captured
+  from the live API on 16 September), `docs/ARCHITECTURE.md` and this file.
+  The first verified mainnet attestation transaction will be added here when
+  it exists; Arc accepts mainnet evidence until 30 September 2026.
 
 ## AI assistance (disclosed)
 
@@ -168,11 +186,7 @@ maintainer's. The same statement is on the ETHGlobal submission form.
 
 - Agent gate demo, next step: a model-driven planner. The first live
   transfer and the decision receipts are in the dated list above.
-- Slides for live judging, if Kyro is selected for round 2.
-- Demo video.
-- Arc mainnet activation on 16 September 2026, after the submission
-  deadline. Arc accepts mainnet evidence until 30 September 2026; the live
-  URL serving Arc mainnet and the first verified mainnet attestation
-  transaction will be added here when it happens.
+- First verified attestation on Arc mainnet, with its transaction hash, for
+  the after-the-window list above.
 
 Entries move from this section to the dated list above only when they ship.

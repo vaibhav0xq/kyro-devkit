@@ -53,13 +53,16 @@ repository.
 
 ## Status
 
-- Live on **Arc Testnet** today. Every read example and the default dry-run of
-  the agent gate demo run against the production deployment with no
+- Live on **Arc mainnet** since 16 September 2026. Arc mainnet is the primary
+  network Kyro reads; Arc Testnet rows stay visible as labeled history and
+  never count as mainnet evidence. Every read example and the default dry-run
+  of the agent gate demo run against the production deployment with no
   credentials. Only the demo's live mode needs a wallet and a Circle CLI
   session, both yours.
-- Arc **mainnet** activation is scheduled for 16 September 2026. Until the
-  evidence links appear in [`CHANGELOG-ETHONLINE.md`](./CHANGELOG-ETHONLINE.md),
-  Kyro is not on mainnet.
+- Arc evidence restarts at zero for every wallet on mainnet, so early Arc
+  scores are thin, not negative. The first verified mainnet attestation
+  transaction will be linked in [`CHANGELOG-ETHONLINE.md`](./CHANGELOG-ETHONLINE.md)
+  once it exists.
 - Advisory and non-custodial. Kyro never holds keys or funds and never moves
   them. It does not perform AML screening and does not provide legal,
   sanctions or regulatory compliance determinations.
@@ -89,24 +92,27 @@ curl -s "$BASE/decision/$WALLET?useCase=payment"
 curl -s "$BASE/decision/0x000000000000000000000000000000000000dEaD?useCase=payment"
 ```
 
-Trimmed answers from 6 September 2026. Scores move as evidence is re-indexed,
-so the numbers you get will differ; the shape will not.
+Trimmed answers from 16 September 2026, the day Arc mainnet became primary.
+The Arc side of this score restarted at zero that day, which is why it reads
+lower than the testnet-era figure. Scores move as evidence is re-indexed, so
+the numbers you get will differ; the shape will not.
 
 ```jsonc
 // 1. score
 { "ok": true, "version": "v1", "data": {
   "wallet": "0xbb30481982786ea53fe1856e0745eec814d83252",
   "username": "vaibhav_meta.kyro",
-  "score": 89, "scoreModelVersion": "identity_score_v1",
-  "riskLevel": "Trusted", "badge": "Trusted Wallet Credential",
+  "score": 43, "scoreModelVersion": "identity_score_v1",
+  "riskLevel": "New / Unproven", "badge": "Emerging Credential",
   "activeChains": ["Ethereum Mainnet", "Base", "Polygon", "Arc Testnet"],
-  "cacheStatus": "cached", "lastIndexedAt": "2026-09-05T18:20:44.987Z" } }
+  // Arc Testnet is listed as history only; "Arc" (mainnet) joins the list once the wallet has mainnet activity
+  "cacheStatus": "cached", "lastIndexedAt": "2026-09-16T12:02:29.654Z" } }
 
 // 2. decision, payment
 { "ok": true, "version": "v1", "data": {
   "decision": "allow",
-  "recommendedLimit": { "amountUsdc": 1000, "currency": "USDC" },
-  "score": 89, "riskLevel": "Trusted",
+  "recommendedLimit": { "amountUsdc": 250, "currency": "USDC" },
+  "score": 43, "riskLevel": "New / Unproven",
   // reasons[], warnings[], evidence.used[] and evidence.missing[] trimmed: each entry is a machine-readable code plus a message
   "freshness": { "cacheStatus": "cached" },
   "scoreModelVersion": "identity_score_v1",
@@ -324,8 +330,10 @@ input to your own decision, not a guarantee about a counterparty. Kyro accepts
 no liability for transactions made with or without it. Kyro is not a
 custodian, a wallet, an exchange or a compliance provider.
 
-Everything in this repository targets Arc Testnet unless stated otherwise;
-testnet USDC has no monetary value. Kyro is an independent project and is not
+The read examples call Kyro's production deployment, which has served Arc
+mainnet as its primary network since 16 September 2026. The agent gate demo
+targets Arc Testnet unless stated otherwise; testnet USDC has no monetary
+value. Kyro is an independent project and is not
 affiliated with, endorsed by or sponsored by Circle Internet Group, Arc or
 ETHGlobal. USDC, Circle and Arc are trademarks of their respective owners and
 are used here only to describe compatibility.
