@@ -178,6 +178,13 @@ Source: the private product repository, not part of this submission.
   Kyro verified the transfer onchain and it is the first Arc row that counts
   as mainnet evidence; it backs one trust edge on the public profile at
   https://www.thekyro.co/profile/vaibhav_meta.kyro. No code change.
+- 2026-09-20: Architecture board re-exported with mainnet wording, same
+  build as the 7 September export. `docs/architecture.png` and
+  `docs/architecture@2x.png` now say Arc mainnet where the product settles:
+  the subtitle, the attestation verifier, the Arc RPC card (mainnet primary,
+  testnet kept as history), the wallet card and the chain-read label. The
+  agent path band keeps Arc Testnet because the gate demo still pays on
+  ARC-TESTNET. No other change.
 
 ## AI assistance (disclosed)
 
