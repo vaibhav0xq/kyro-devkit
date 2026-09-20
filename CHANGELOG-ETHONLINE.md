@@ -171,8 +171,13 @@ Source: the private product repository, not part of this submission.
   activated by configuration. Docs only in this repository: the status and
   disclaimer sections of the root README, the sample answers (re-captured
   from the live API on 16 September), `docs/ARCHITECTURE.md` and this file.
-  The first verified mainnet attestation transaction will be added here when
-  it exists; Arc accepts mainnet evidence until 30 September 2026.
+- 2026-09-20: First verified attestation on Arc mainnet. A 0.5 USDC payment
+  from `vaibhav_meta.kyro` to `asrith.kyro` in block 21,847,679 on chain
+  5042, transaction
+  [`0x4311293e36a7fbad2a3fe468517d75b81decd3e99169aa3a63c3e277044ac374`](https://explorer.arc.io/tx/0x4311293e36a7fbad2a3fe468517d75b81decd3e99169aa3a63c3e277044ac374).
+  Kyro verified the transfer onchain and it is the first Arc row that counts
+  as mainnet evidence; it backs one trust edge on the public profile at
+  https://www.thekyro.co/profile/vaibhav_meta.kyro. No code change.
 
 ## AI assistance (disclosed)
 
@@ -186,7 +191,5 @@ maintainer's. The same statement is on the ETHGlobal submission form.
 
 - Agent gate demo, next step: a model-driven planner. The first live
   transfer and the decision receipts are in the dated list above.
-- First verified attestation on Arc mainnet, with its transaction hash, for
-  the after-the-window list above.
 
 Entries move from this section to the dated list above only when they ship.

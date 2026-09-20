@@ -61,8 +61,9 @@ repository.
   session, both yours.
 - Arc evidence restarts at zero for every wallet on mainnet, so early Arc
   scores are thin, not negative. The first verified mainnet attestation
-  transaction will be linked in [`CHANGELOG-ETHONLINE.md`](./CHANGELOG-ETHONLINE.md)
-  once it exists.
+  transaction was confirmed on 20 September 2026: 0.5 USDC, block
+  21,847,679, [explorer.arc.io](https://explorer.arc.io/tx/0x4311293e36a7fbad2a3fe468517d75b81decd3e99169aa3a63c3e277044ac374).
+  Details in [`CHANGELOG-ETHONLINE.md`](./CHANGELOG-ETHONLINE.md).
 - Advisory and non-custodial. Kyro never holds keys or funds and never moves
   them. It does not perform AML screening and does not provide legal,
   sanctions or regulatory compliance determinations.
