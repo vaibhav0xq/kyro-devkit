@@ -5,9 +5,13 @@ Reads a pre-transaction decision for one wallet and one use case, prints the
 verdict, then exits with a code a shell pipeline can branch on:
 
     0  proceed   verdict allow and the amount is within the advisory limit
-    2  hold      verdict caution or the amount exceeds the advisory limit
+    2  hold      verdict caution, an unrecognised verdict, or the amount
+                 exceeds the advisory limit
     3  block     verdict block
     1  failure   the request did not produce a Kyro answer
+
+Only an explicit allow can reach 0. A verdict this script does not recognise
+is held, not passed, so a value added to the API later fails closed here.
 
     python3 kyro_quickstart.py 0xbb30481982786ea53fe1856e0745eec814d83252 payment 25
 
@@ -133,10 +137,13 @@ def main(argv):
 
     verdict = decision["decision"]
     if verdict == "block":
-        print("\nHOLD: block verdict for %g USDC." % amount)
+        print("\nBLOCK: block verdict for %g USDC." % amount)
         return 3
     if verdict == "caution":
         print("\nHOLD: caution verdict, route %g USDC to manual review." % amount)
+        return 2
+    if verdict != "allow":
+        print("\nHOLD: unrecognised verdict %r, route %g USDC to manual review." % (verdict, amount))
         return 2
     if amount > limit["amountUsdc"]:
         print("\nHOLD: %g USDC exceeds the advisory limit of %s USDC." % (amount, limit["amountUsdc"]))

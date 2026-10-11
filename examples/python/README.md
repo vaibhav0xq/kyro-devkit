@@ -11,6 +11,19 @@ python3 kyro_quickstart.py 0xbb30481982786ea53fe1856e0745eec814d83252 escrow 500
 Exit codes: 0 proceed, 2 hold, 3 block, 1 request failure. Rate limit headers
 are echoed to stderr so the JSON-free stdout stays easy to parse.
 
+Only an explicit `allow` within the advisory limit reaches 0. A verdict the
+script does not recognise is held at 2 rather than passed, so a value added to
+the API later fails closed here. `1` means no answer arrived at all, which is
+not the same as a bad answer: fold it into 3 and a flaky network looks like a
+block, fold it into 0 and an outage looks like approval.
+
+`test_quickstart.py` covers those mappings with a stubbed `kyro_get`. It makes
+no network calls and needs no credentials:
+
+```sh
+python3 -m unittest discover -s examples/python
+```
+
 The `kyro_get` helper is the whole client: it builds the URL, adds the
 optional `Authorization: Bearer` header (only over https), unwraps the
 `{ ok, version, data | error }` envelope and turns error envelopes into a

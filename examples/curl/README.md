@@ -59,9 +59,37 @@ stderr and optional pretty printing through `jq`.
 KYRO_API_KEY=kyro_live_... ./kyro.sh refresh 0xbb30481982786ea53fe1856e0745eec814d83252
 ```
 
-The script exits non-zero when the API answers with an error envelope, so it
-can gate a step in a larger shell script. Set `KYRO_BASE_URL` to point it at
-another origin.
+Set `KYRO_BASE_URL` to point it at another origin.
+
+### Exit status is about the request, not the verdict
+
+`kyro.sh` is a client, not a gate. It exits 0 when the HTTP request succeeded.
+That is not the same as the wallet being approved.
+
+A block verdict is a normal HTTP 200 response, so `./kyro.sh decision <wallet>`
+exits 0 whether the verdict is allow, caution or block. Under `set -e` a
+pipeline that only checks the script's exit status will carry straight on to
+the payment.
+
+If you are gating a payment, read the `decision` field out of the response and
+branch on it yourself:
+
+```sh
+verdict="$(./kyro.sh decision "$WALLET" payment | jq -r '.data.decision')"
+case "$verdict" in
+  allow)   ;;                                     # your own limit checks still apply
+  caution) echo "hold: caution" >&2; exit 2 ;;
+  block)   echo "blocked" >&2; exit 3 ;;
+  *)       echo "hold: unrecognised verdict '$verdict'" >&2; exit 2 ;;
+esac
+```
+
+The last branch matters. A verdict this script does not know about should hold,
+not pass. The Python quickstart in `../python` does this mapping for you and
+returns the verdict in its own exit code.
+
+The other exit codes are 1 for a non-2xx response, 2 for a bad argument or an
+unknown command and 64 for no command at all.
 
 ## Notes
 

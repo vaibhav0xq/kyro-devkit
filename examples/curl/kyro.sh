@@ -21,12 +21,21 @@
 # read that starts a rescan of a stale known wallet costs 5 more), a batch of N
 # unique rows costs N, an intake start costs 8. Responses carry
 # X-RateLimit-Limit and X-RateLimit-Remaining; a 429 adds Retry-After.
+#
+# Exit status:
+#   0    the HTTP request succeeded. It does NOT mean the wallet was approved.
+#        A block verdict is a normal HTTP 200, so a decision read exits 0 even
+#        when the verdict is block. This script is a client, not a gate. Read
+#        the decision field yourself before letting a payment through.
+#   1    the API answered with a non-2xx status
+#   2    bad argument or unknown command
+#   64   no command given
 set -euo pipefail
 
 BASE="${KYRO_BASE_URL:-https://www.thekyro.co}/api/v1"
 
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-64}"
 }
 
