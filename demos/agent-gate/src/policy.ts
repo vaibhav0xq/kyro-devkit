@@ -10,6 +10,7 @@ import type {
   Action,
   Caps,
   Condition,
+  ConfirmedPayment,
   PolicyDecision,
   PolicyInput,
   Proposal,
@@ -123,6 +124,27 @@ function findDuplicate(
   });
 }
 
+/**
+ * The confirmed payment this proposal would repeat, if there is one. The
+ * match is the same triple the key reuse uses, invoice, recipient and
+ * amount, so a different invoice to the same recipient is left to the
+ * ordinary duplicate window rather than held forever.
+ */
+export function findConfirmed(
+  proposal: Proposal,
+  confirmedPayments: readonly ConfirmedPayment[],
+): ConfirmedPayment | undefined {
+  if (!isAddress(proposal.to)) return undefined;
+  const to = normaliseAddress(proposal.to);
+  return confirmedPayments.find(
+    (payment) =>
+      payment.invoiceId === proposal.invoiceId &&
+      isAddress(payment.to) &&
+      normaliseAddress(payment.to) === to &&
+      payment.amountUsdc === proposal.amountUsdc,
+  );
+}
+
 /** The amount a human may approve on a hold. Undefined when nothing is left to approve. */
 export function cappedAlternative(input: {
   requestedUsdc: number;
@@ -145,6 +167,7 @@ function resolveAction(conditions: Condition[]): Action {
 
 export function decide(input: PolicyInput): PolicyDecision {
   const { proposal, assessment, caps, spentUsdcThisRun, recentPayments, now } = input;
+  const confirmedPayments = input.confirmedPayments ?? [];
   const conditions = prescreen(proposal, {
     ...(input.agentWallet !== undefined ? { agentWallet: input.agentWallet } : {}),
     ...(input.allowedRecipients !== undefined ? { allowedRecipients: input.allowedRecipients } : {}),
@@ -223,6 +246,20 @@ export function decide(input: PolicyInput): PolicyDecision {
       code: "DUPLICATE_RECENT",
       action: "hold",
       message: `an identical payment (same recipient and amount) was approved at ${duplicate.at}, inside the ${DUPLICATE_WINDOW_MS / 60_000} minute duplicate window`,
+    });
+  }
+
+  // A reconcile already proved this exact payment went through. The ten
+  // minute duplicate window has nothing to say about it by now, and the
+  // idempotency key cannot be relied on forever either, so the only safe
+  // answer is to stop and let a human decide whether to pay a second time.
+  const alreadyConfirmed = findConfirmed(proposal, confirmedPayments);
+  if (alreadyConfirmed !== undefined) {
+    const tx = alreadyConfirmed.transactionId !== null ? ` as ${alreadyConfirmed.transactionId}` : "";
+    conditions.push({
+      code: "PAYMENT_ALREADY_CONFIRMED",
+      action: "hold",
+      message: `this invoice, recipient and amount was confirmed onchain${tx} by a reconcile at ${alreadyConfirmed.at}; paying again would be a second transfer`,
     });
   }
 

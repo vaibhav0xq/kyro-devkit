@@ -30,7 +30,21 @@ export const DEFAULTS = {
 
 export const SIMULATION_KINDS: readonly SimulationKind[] = ["timeout", "rate_limit", "server_error"];
 
+/**
+ * Subcommands. `run` is what every invocation without one does, exactly as
+ * before. `resume` only reads: it settles live attempts the audit log never
+ * got a terminal answer for and never transfers anything.
+ */
+export type Command = "run" | "resume";
+
+export const COMMANDS: readonly Command[] = ["run", "resume"];
+
+function isCommand(value: string): value is Command {
+  return (COMMANDS as readonly string[]).includes(value);
+}
+
 export interface Flags {
+  command: Command;
   help: boolean;
   tasks?: string;
   mode?: string;
@@ -41,6 +55,7 @@ export interface Flags {
 }
 
 export interface Config {
+  command: Command;
   mode: Mode;
   tasksPath: string;
   only: string | undefined;
@@ -58,9 +73,18 @@ export interface Config {
   auditLogPath: string;
 }
 
-export const USAGE = `Usage: pnpm agent-gate [-- flags]
+export const USAGE = `Usage: pnpm agent-gate [-- [command] flags]
 
-  --tasks <file>        task file, relative to the current directory (default ${DEFAULTS.tasksFile} in demos/agent-gate)
+Commands:
+  (none)                run the gate over the task file, the default
+  resume                settle live attempts the audit log never got a terminal answer for:
+                        read the agent wallet's outbound transfers once, record what each
+                        unresolved attempt turned out to be, transfer nothing and retry nothing.
+                        Needs AGENT_WALLET_ADDRESS and takes the same live lock as a live run.
+                        Exits 4 while any attempt is still unresolved
+
+Flags:
+  --tasks <file>      task file, relative to the current directory (default ${DEFAULTS.tasksFile} in demos/agent-gate)
   --only <invoiceId>    run a single invoice from the task file
   --mode <dry-run|live> dry-run (default) prints the Circle CLI command and runs nothing;
                         live spawns it for every proceed and needs AGENT_WALLET_ADDRESS plus
@@ -83,7 +107,17 @@ const BOOLEAN_FLAGS = new Set(["interactive", "help"]);
 /** Parses process.argv.slice(2). A leading literal "--" (forwarded by pnpm) is dropped. */
 export function parseFlags(argv: readonly string[]): Flags {
   const args = argv[0] === "--" ? argv.slice(1) : [...argv];
-  const flags: Flags = { help: false, interactive: false };
+  const flags: Flags = { command: "run", help: false, interactive: false };
+  // A bare word is only accepted in first position and only as a command,
+  // so every argument that used to be rejected still is.
+  const first = args[0];
+  if (first !== undefined && !first.startsWith("--")) {
+    if (!isCommand(first)) {
+      throw new ConfigError(`unknown command ${JSON.stringify(first)}\n\n${USAGE}`);
+    }
+    flags.command = first;
+    args.shift();
+  }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
@@ -215,6 +249,11 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
   if (mode === "live" && simulate !== undefined) {
     throw new ConfigError("--simulate is refused in live mode; simulated failures are for dry-run only");
   }
+  // Refuse rather than ignore: resume makes no Kyro read, so there is
+  // nothing for a simulated failure to act on.
+  if (flags.command === "resume" && simulate !== undefined) {
+    throw new ConfigError("--simulate is refused by resume; it makes no Kyro read");
+  }
 
   const receipts = resolveReceipts(flags, env, mode);
 
@@ -225,6 +264,13 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
       throw new ConfigError("AGENT_WALLET_ADDRESS must be a 0x-prefixed 40-hex address");
     }
     agentWallet = walletRaw.toLowerCase();
+  }
+  // resume reads the live history of this wallet and matches transfers
+  // against it, so it needs the payer for the same reason a live run does.
+  if (flags.command === "resume" && agentWallet === undefined) {
+    throw new ConfigError(
+      "resume needs AGENT_WALLET_ADDRESS, the paying agent wallet whose outbound transfers are read (circle wallet list --chain ARC-TESTNET --type agent). Nothing was read.",
+    );
   }
   if (mode === "live" && agentWallet === undefined) {
     throw new ConfigError(
@@ -242,6 +288,7 @@ export function resolveConfig(flags: Flags, env: NodeJS.ProcessEnv, packageDir: 
   const circleTimeoutMs = readNumber(env, "CIRCLE_TIMEOUT_MS", DEFAULTS.circleTimeoutMs, 1000);
 
   return {
+    command: flags.command,
     mode,
     tasksPath: flags.tasks !== undefined ? resolve(flags.tasks) : resolve(packageDir, DEFAULTS.tasksFile),
     only: flags.only,

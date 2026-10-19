@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { ARCSCAN_BASE_URL, buildReconcileArgv, formatCommand } from "./circle";
 import { DUPLICATE_WINDOW_MS } from "./policy";
+import type { ReconcileOutcome, UnresolvedAttempt } from "./reconcile";
 
 export type Out = (line: string) => void;
 
@@ -304,5 +305,75 @@ export function renderSummary(out: Out, summary: SummaryInfo): void {
   const budget = `${usdc(summary.approvedUsdc)} approved of the ${usdc(summary.caps.maxUsdcPerRun)} run budget`;
   const mode = summary.mode === "dry-run" ? "dry-run, nothing was submitted" : "live";
   out(row("summary", `${counts}. ${reads}.${receipts} ${budget}. Mode ${mode}.`));
+  out(row("audit", summary.auditPath));
+}
+
+export interface ResumeHeaderInfo {
+  agentWallet: string;
+  auditPath: string;
+  chain: string;
+  circleBin: string;
+  unresolved: number;
+}
+
+export function renderResumeHeader(out: Out, info: ResumeHeaderInfo): void {
+  out("Kyro agent gate (resume)");
+  out(row("payer", info.agentWallet));
+  out(row("chain", info.chain));
+  out(row("audit", info.auditPath));
+  out(
+    row(
+      "unresolved",
+      info.unresolved === 0
+        ? "none; every live attempt in this log has a terminal answer"
+        : `${info.unresolved} live attempt${info.unresolved === 1 ? "" : "s"} with no terminal answer`,
+    ),
+  );
+  if (info.unresolved > 0) {
+    out(row("circle", `${info.circleBin}, one read-only listing, nothing is transferred and nothing is retried`));
+  }
+}
+
+export function renderResumeSpawn(out: Out, bin: string, argv: string[], timeoutMs: number | undefined): void {
+  out(row("reading", formatCommand(bin, argv)));
+  const budget = timeoutMs !== undefined ? ` (up to ${Math.round(timeoutMs / 1000)} s)` : "";
+  out(cont(`listing the agent wallet's outbound transfers${budget}; this moves nothing`));
+}
+
+export function renderResumeAttempt(out: Out, attempt: UnresolvedAttempt, result: ReconcileOutcome): void {
+  out("");
+  out(row("attempt", `${attempt.invoiceId} ${usdc(attempt.amountUsdc)} to ${attempt.to}`));
+  out(cont(`idempotency key ${attempt.idempotencyKey}, intent written ${attempt.intentAt}`));
+  if (result.outcome === "confirmed") {
+    out(row("confirmed", result.detail));
+    if (result.txHash !== null) out(cont(`${ARCSCAN_BASE_URL}/tx/${result.txHash}`));
+    out(cont("the payment went through; do not send it again"));
+    return;
+  }
+  if (result.outcome === "failed") {
+    out(row("failed", result.detail));
+    out(cont("nothing moved; this invoice can be proposed again"));
+    return;
+  }
+  out(row("unknown", result.detail));
+  out(cont("still unresolved; check again or look at the wallet by hand before paying this invoice"));
+}
+
+export interface ResumeSummaryInfo {
+  checked: number;
+  confirmed: number;
+  failed: number;
+  stillUnknown: number;
+  auditPath: string;
+}
+
+export function renderResumeSummary(out: Out, summary: ResumeSummaryInfo): void {
+  out("");
+  out(
+    row(
+      "summary",
+      `checked ${summary.checked}, confirmed ${summary.confirmed}, failed ${summary.failed}, still unknown ${summary.stillUnknown}. Nothing was transferred.`,
+    ),
+  );
   out(row("audit", summary.auditPath));
 }

@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { AGENT, tempAuditPath } from "./helpers";
+import { AGENT, BUILDER, tempAuditPath } from "./helpers";
 
 const run = promisify(execFile);
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -206,5 +206,116 @@ describe("cli", () => {
     const result = await cli(["--simulate", "timeout"], { AGENT_WALLET_ADDRESS: "not-an-address" });
     assert.equal(result.code, 1);
     assert.match(result.stderr, /AGENT_WALLET_ADDRESS must be/);
+  });
+
+  it("with no subcommand still runs the gate exactly as before", async () => {
+    const result = await cli(["--simulate", "timeout", "--only", "inv-001"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^Kyro agent gate \(dry-run\)/);
+    assert.doesNotMatch(result.stdout, /resume/);
+  });
+
+  it("refuses a word that is not a command and still refuses stray arguments", async () => {
+    const unknown = await cli(["reconcile"]);
+    assert.equal(unknown.code, 1);
+    assert.match(unknown.stderr, /unknown command "reconcile"/);
+
+    const stray = await cli(["--simulate", "timeout", "run"]);
+    assert.equal(stray.code, 1);
+    assert.match(stray.stderr, /unexpected argument "run"/);
+  });
+});
+
+describe("cli: resume", () => {
+  it("is listed in the usage text", async () => {
+    const result = await cli(["--help"]);
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /resume\s+settle live attempts/);
+  });
+
+  it("needs AGENT_WALLET_ADDRESS and reads nothing without it", async () => {
+    const result = await cli(["resume"], { AGENT_WALLET_ADDRESS: "" });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /resume needs AGENT_WALLET_ADDRESS/);
+    assert.equal(result.stdout, "");
+  });
+
+  it("refuses --simulate, which it has nothing to simulate", async () => {
+    const result = await cli(["resume", "--simulate", "timeout"], { AGENT_WALLET_ADDRESS: AGENT });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--simulate is refused by resume/);
+  });
+
+  it("exits 0 on a log with nothing unresolved and never spawns the CLI", async () => {
+    const auditPath = await tempAuditPath();
+    const result = await cli(["resume"], {
+      AGENT_GATE_AUDIT_LOG: auditPath,
+      AGENT_WALLET_ADDRESS: AGENT,
+      CIRCLE_BIN: join(tmpdir(), "circle-that-does-not-exist"),
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^Kyro agent gate \(resume\)/);
+    assert.match(result.stdout, /unresolved\s+none/);
+    assert.doesNotMatch(result.stdout, /reading\s+/);
+  });
+
+  it("exits 4 and resolves nothing when the listing cannot be read", async () => {
+    const auditPath = await tempAuditPath();
+    const intent = {
+      type: "intent",
+      at: "2026-09-07T10:00:00.000Z",
+      runId: "run-1",
+      mode: "live",
+      invoiceId: "inv-001",
+      to: BUILDER,
+      requestedUsdc: 1.5,
+      approvedUsdc: 1.5,
+      action: "proceed",
+      humanApproved: false,
+      conditions: [],
+      verdict: "allow",
+      advisoryLimitUsdc: 1000,
+      cacheStatus: "cached",
+      decisionModelVersion: "decision_v0.4.1",
+      kyroFailure: null,
+      simulated: false,
+      idempotencyKey: "3f2a9c1e-7b4d-4c8a-9f21-5e6d7c8b9a01",
+      receiptId: null,
+      receiptPayloadHash: null,
+      receiptDeduped: null,
+      receiptUrl: null,
+    };
+    await writeFile(auditPath, `${JSON.stringify(intent)}\n`, "utf8");
+
+    const result = await cli(["resume"], {
+      AGENT_GATE_AUDIT_LOG: auditPath,
+      AGENT_WALLET_ADDRESS: AGENT,
+      CIRCLE_BIN: join(tmpdir(), "circle-that-does-not-exist"),
+      CIRCLE_TIMEOUT_MS: "2000",
+    });
+    assert.equal(result.code, 4, result.stderr);
+    assert.match(result.stdout, /unresolved\s+1 live attempt/);
+    assert.match(result.stdout, /still unknown 1/);
+
+    const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+    assert.equal(lines.length, 2);
+    const resolution = JSON.parse(lines[1] ?? "{}") as { type: string; outcome: string; transactionId: null };
+    assert.equal(resolution.type, "resolution");
+    assert.equal(resolution.outcome, "unknown");
+    assert.equal(resolution.transactionId, null);
+    // The intent line is untouched.
+    assert.deepEqual(JSON.parse(lines[0] ?? "{}"), intent);
+  });
+
+  it("releases the live lock it took", async () => {
+    const auditPath = await tempAuditPath();
+    const env = {
+      AGENT_GATE_AUDIT_LOG: auditPath,
+      AGENT_WALLET_ADDRESS: AGENT,
+      CIRCLE_BIN: join(tmpdir(), "circle-that-does-not-exist"),
+    };
+    assert.equal((await cli(["resume"], env)).code, 0);
+    await assert.rejects(readFile(`${auditPath}.lock`), /ENOENT/);
+    assert.equal((await cli(["resume"], env)).code, 0);
   });
 });

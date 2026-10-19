@@ -197,8 +197,8 @@ key and its output is unchanged.
 
 ### Reconcile after an unknown
 
-An unknown means the demo does not know whether USDC moved. Before running
-again, look:
+An unknown means the demo does not know whether USDC moved. Either settle it
+with `resume` below, or look by hand:
 
 ```bash
 circle transaction list --address <AGENT_WALLET_ADDRESS> --chain ARC-TESTNET --operation transfer --tx-type outbound --output json
@@ -213,6 +213,54 @@ after the intent (the intent alone counts, so an interrupted run holds too).
 After that a run reuses the idempotency key rather than inventing one, and
 its reconcile hint keeps the time of the intent that first sent the key,
 because Circle answers a reused key with the original transaction.
+
+### resume
+
+`resume` does that lookup for you. It reads the audit log, finds every live
+attempt with no terminal answer, runs the listing above once and records
+what each one turned out to be.
+
+```bash
+pnpm agent-gate -- resume
+```
+
+It needs `AGENT_WALLET_ADDRESS` and takes the same live lock as a live run,
+because it reads the log and then appends to it. It transfers nothing, it
+retries nothing and it never edits a line that is already there.
+
+An attempt is unresolved when a live `proceed` intent carrying an
+idempotency key has no `submitted` or `failed` result after it and no
+resolution. A result of `unknown` leaves it unresolved, which is the whole
+point. Dry-run entries are ignored.
+
+Matching is the weak part and the code treats it that way. **The provider
+response carries no idempotency key**: a transaction object has `id`,
+`state`, `blockchain`, `txHash`, `sourceAddress`, `destinationAddress`,
+`amounts`, `operation`, `transactionType`, `createDate`, `updateDate` and
+`firstConfirmDate`, and nothing that echoes the key the transfer was sent
+with. So a candidate has to agree on the paying wallet, the recipient, the
+amount, the chain, an outbound transfer, and a `createDate` at or after the
+moment the intent line was written.
+
+From there only a single terminal candidate settles anything:
+
+- exactly one candidate in `CONFIRMED` or `COMPLETE`: **confirmed**, the
+  payment went through and must not be sent again
+- exactly one candidate in `FAILED`, `CANCELLED` or `DENIED`: **failed**,
+  nothing moved and the invoice can be proposed again
+- anything still moving (`INITIATED`, `QUEUED`, `SENT`, `CLEARED`, `STUCK`),
+  a state the demo does not recognise, an empty listing, an unreadable
+  answer, or **two candidates that look alike**: still **unknown**
+
+Two lookalike candidates stay unknown on purpose. Without a key in the
+response there is no way to tell a second payment from the first one, and
+deciding wrongly is the expensive direction. An empty listing resolves
+nothing either, because a very recent transfer may simply not be there yet.
+
+Each attempt gets one `resolution` line, written after the interpretation,
+never before it. `resume` exits 4 while anything is still unresolved and 0
+when nothing is left. Running it again after everything is settled reads the
+log, finds nothing open, spawns no process and writes no line.
 
 ### Caps
 
@@ -312,14 +360,25 @@ Dry-run results never count as payments for the duplicate guard, because
 nothing moved. Live intents and results all do, including `failed` and
 `unknown`, because the guard would rather hold once too often than pay twice.
 
+`resume` appends a third line type, `resolution`, carrying the idempotency
+key of the attempt it settles, the outcome (`confirmed`, `failed` or
+`unknown`), the provider transaction id and hash when there are any, where
+the answer came from and why. It is a new line, not an edit: the intent and
+result lines it settles stay exactly as they were, so the log stays
+append-only and the history of the uncertainty is kept. A resolution is
+never counted as a payment by the duplicate guard and never becomes the
+prior attempt whose key a later run reuses.
+
 ## Exit codes
 
-- `0`: the run completed, whatever the mix of proceed, hold and refuse
+- `0`: the run completed, whatever the mix of proceed, hold and refuse; or
+  `resume` left nothing unresolved
 - `1`: configuration, task file or lock problem, printed to stderr; or, in
   live mode, at least one transfer the Circle CLI rejected with nothing moved
 - `4`: at least one live transfer ended in an unknown state and needs the
   reconcile steps above (wins over 1, kept even if the run dies before its
-  summary; not reachable in dry-run)
+  summary; not reachable in dry-run); or `resume` could not settle every
+  attempt it found
 
 ## Layout
 
@@ -330,10 +389,13 @@ src/planners/scripted.ts task file loader and validation
 src/kyro.ts              decision read and receipt creation through @kyrodev/sdk, throttle, failure mapping, simulations
 src/policy.ts            pre-screen, decision, capped alternative (pure)
 src/circle.ts            Circle CLI argv builder, the dry-run executor, the live executor and its output reader
-src/audit.ts             JSONL audit log and the duplicate-guard reader
+src/audit.ts             JSONL audit log, the duplicate-guard reader and unresolved-attempt discovery
+src/reconcile.ts         reads one transaction listing into confirmed, failed or unknown (pure)
+src/resume.ts            the resume command: discover, list once, record a resolution per attempt
 src/gate.ts              the loop that ties them together
 src/render.ts            terminal output
 tests/                   node:test, run with pnpm test here or pnpm run verify at the root
+tests/fixtures/          recorded Circle CLI answers, redacted
 ```
 
 ## Tests

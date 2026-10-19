@@ -11,11 +11,16 @@ const PKG = "/pkg";
 
 describe("parseFlags", () => {
   it("defaults to no flags", () => {
-    assert.deepEqual(parseFlags([]), { help: false, interactive: false });
+    assert.deepEqual(parseFlags([]), { command: "run", help: false, interactive: false });
   });
 
   it("drops the leading -- that pnpm forwards", () => {
-    assert.deepEqual(parseFlags(["--", "--simulate", "timeout"]), { help: false, interactive: false, simulate: "timeout" });
+    assert.deepEqual(parseFlags(["--", "--simulate", "timeout"]), {
+      command: "run",
+      help: false,
+      interactive: false,
+      simulate: "timeout",
+    });
   });
 
   it("accepts both --flag value and --flag=value", () => {

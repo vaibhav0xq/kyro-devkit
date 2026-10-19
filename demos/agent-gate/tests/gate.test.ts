@@ -625,6 +625,109 @@ function priorLiveLines(state: "submitted" | "failed" | "unknown" | null, minute
   return `${intent}\n${result}\n`;
 }
 
+/** The line `resume` appends once a reconcile settled an attempt. */
+function resolutionLine(
+  outcome: "confirmed" | "failed" | "unknown",
+  minutesAgo: number,
+  overrides: Record<string, unknown> = {},
+  key = KEY_A,
+): string {
+  return `${JSON.stringify({
+    type: "resolution",
+    at: new Date(FIXED_NOW.getTime() - minutesAgo * 60_000).toISOString(),
+    runId: "resume-earlier",
+    mode: "live",
+    invoiceId: "inv-001",
+    to: BUILDER,
+    amountUsdc: 1.5,
+    idempotencyKey: key,
+    outcome,
+    transactionId: outcome === "unknown" ? null : CIRCLE_TX_ID,
+    txHash: outcome === "confirmed" ? TX_HASH : null,
+    source: "circle transaction list",
+    detail: "test",
+    ...overrides,
+  })}\n`;
+}
+
+/**
+ * The hazard a reconcile introduces: once resume proves a payment went
+ * through, the ten minute duplicate window has long expired and the
+ * idempotency key is the only thing left standing between a repeat
+ * proposal and a second transfer. A key that old cannot be relied on, so
+ * the proof in the log has to stop the payment by itself.
+ */
+describe("gate: a payment a reconcile confirmed is never sent again", () => {
+  // A full day later, far outside the duplicate window.
+  const A_DAY = 24 * 60;
+
+  it("holds the repeat and never calls the executor", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", A_DAY) + resolutionLine("confirmed", A_DAY - 1));
+
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+
+    assert.equal(run.outcomes[0]?.action, "hold");
+    assert.equal(h.executor.calls.length, 0, "the executor must not be called for a confirmed payment");
+    assert.equal(run.proceeded, 0);
+    assert.deepEqual(
+      run.outcomes[0]?.policy.conditions.map((condition) => condition.code),
+      ["PAYMENT_ALREADY_CONFIRMED"],
+    );
+    assert.match(h.out.text(), /confirmed onchain as 7f1e2d3c/);
+    assert.match(h.out.text(), /paying again would be a second transfer/);
+    // Nothing was spawned, so no new idempotency key was minted either.
+    const entries = await auditEntries(h.auditPath);
+    assert.equal(intents(entries).at(-1)?.idempotencyKey, null);
+  });
+
+  it("holds even when the duplicate window has long expired", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", A_DAY * 30) + resolutionLine("confirmed", A_DAY * 30));
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "hold");
+    assert.equal(h.executor.calls.length, 0);
+  });
+
+  it("still pays when the reconcile proved the transfer failed", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", A_DAY) + resolutionLine("failed", A_DAY - 1));
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(h.executor.calls.length, 1);
+  });
+
+  it("still chases an attempt whose reconcile resolved nothing, and reuses its key", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", A_DAY) + resolutionLine("unknown", A_DAY - 1));
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(h.executor.calls[0]?.idempotencyKey, KEY_A);
+  });
+
+  it("does not hold a different invoice, amount or recipient", async () => {
+    for (const [override, line] of [
+      [{ invoiceId: "inv-002" }, resolutionLine("confirmed", 24 * 60 - 1)],
+      [{ invoiceId: "inv-001" }, resolutionLine("confirmed", 24 * 60 - 1, { amountUsdc: 2.5 })],
+      [{ invoiceId: "inv-001" }, resolutionLine("confirmed", 24 * 60 - 1, { to: OTHER })],
+    ] as const) {
+      const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+      await writeFile(h.auditPath, line);
+      const run = await runGate(h.deps, [proposal(override)]);
+      assert.equal(run.outcomes[0]?.action, "proceed", JSON.stringify(override));
+      assert.equal(h.executor.calls.length, 1);
+    }
+  });
+
+  it("decides exactly as before on a log that has no resolution lines", async () => {
+    const h = await liveHarness("submitted", [okJson(decisionPayload())]);
+    await writeFile(h.auditPath, priorLiveLines("unknown", A_DAY));
+    const run = await runGate(h.deps, [proposal({ invoiceId: "inv-001" })]);
+    assert.equal(run.outcomes[0]?.action, "proceed");
+    assert.equal(h.executor.calls[0]?.idempotencyKey, KEY_A);
+  });
+});
+
 describe("gate: live mode", () => {
   it("passes a fresh idempotency key through the intent line, the request and the argv", async () => {
     const h = await liveHarness("submitted", [okJson(decisionPayload())]);

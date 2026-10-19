@@ -15,7 +15,8 @@
  */
 import { appendFile, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Action, ConditionCode, ExecutionResult, Mode, RecentPayment } from "./types";
+import type { UnresolvedAttempt } from "./reconcile";
+import type { Action, ConditionCode, ConfirmedPayment, ExecutionResult, Mode, RecentPayment } from "./types";
 
 export interface AuditIntent {
   type: "intent";
@@ -69,7 +70,33 @@ export interface AuditResult {
   detail: string | null;
 }
 
-export type AuditEntry = AuditIntent | AuditResult;
+/**
+ * What a reconcile concluded about an attempt that ended unknown. Written
+ * by `resume`, never by a run that pays. It is a new line, not an edit: the
+ * intent and result lines it settles stay exactly as they were, so the log
+ * remains append-only and the history of the uncertainty is kept.
+ */
+export interface AuditResolution {
+  type: "resolution";
+  at: string;
+  runId: string;
+  mode: Mode;
+  invoiceId: string;
+  to: string;
+  amountUsdc: number;
+  /** The key the attempt was sent with. Identifies which attempt this settles. */
+  idempotencyKey: string;
+  outcome: "confirmed" | "failed" | "unknown";
+  /** The provider's transaction id when one was matched. Null when nothing resolved. */
+  transactionId: string | null;
+  txHash: string | null;
+  /** How this was decided, for example "circle transaction list". */
+  source: string;
+  /** Why, in words. Always set, including on an unknown that resolved nothing. */
+  detail: string;
+}
+
+export type AuditEntry = AuditIntent | AuditResult | AuditResolution;
 
 export interface PriorAttempt {
   idempotencyKey: string;
@@ -94,6 +121,21 @@ export interface AuditLog {
    * amount) that carried an idempotency key, with its last known state.
    */
   lastLiveAttempt(invoiceId: string, to: string, amountUsdc: number): Promise<PriorAttempt | undefined>;
+  /**
+   * Live attempts the log never settled, oldest first: a proceed intent
+   * carrying an idempotency key with no terminal result and no resolution
+   * after it. A result of `unknown` leaves the attempt here, because that
+   * is exactly the case that needs chasing, and so does a resolution whose
+   * own outcome was unknown. Dry-run entries are ignored, nothing moved.
+   */
+  unresolvedLiveAttempts(): Promise<UnresolvedAttempt[]>;
+  /**
+   * Payments a reconcile confirmed, with no time window. The duplicate
+   * guard forgets after ten minutes, which is right for a payment nobody
+   * ever verified, and wrong for one the log proves went through: that is
+   * the single case where this demo has hard evidence USDC moved.
+   */
+  confirmedLivePayments(): Promise<ConfirmedPayment[]>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,6 +171,14 @@ function toEntry(parsed: unknown): AuditEntry | undefined {
   if (parsed.type === "intent") {
     if (typeof parsed.to !== "string" || typeof parsed.action !== "string") return undefined;
     return parsed as unknown as AuditIntent;
+  }
+  if (parsed.type === "resolution") {
+    if (typeof parsed.to !== "string" || typeof parsed.amountUsdc !== "number") return undefined;
+    if (typeof parsed.idempotencyKey !== "string" || parsed.idempotencyKey === "") return undefined;
+    if (parsed.outcome !== "confirmed" && parsed.outcome !== "failed" && parsed.outcome !== "unknown") {
+      return undefined;
+    }
+    return parsed as unknown as AuditResolution;
   }
   if (parsed.type !== "result") return undefined;
   if (typeof parsed.to !== "string" || typeof parsed.amountUsdc !== "number" || typeof parsed.state !== "string") {
@@ -251,7 +301,9 @@ export function createAuditLog(path: string): AuditLog {
             intentAt: firstIntentAt.get(entry.idempotencyKey) ?? entry.at,
             state: "unknown",
           };
-        } else if (entry.amountUsdc === amountUsdc && entry.state !== "dry-run") {
+          // A resolution line settles an attempt, it is not an attempt, so it
+          // never becomes the prior attempt whose key a later run reuses.
+        } else if (entry.type === "result" && entry.amountUsdc === amountUsdc && entry.state !== "dry-run") {
           if (typeof entry.idempotencyKey !== "string" || entry.idempotencyKey === "") continue;
           found = {
             idempotencyKey: entry.idempotencyKey,
@@ -262,6 +314,54 @@ export function createAuditLog(path: string): AuditLog {
         }
       }
       return found;
+    },
+    async unresolvedLiveAttempts() {
+      const entries = await readEntries(path);
+      // Keyed by idempotency key: a reused key is one attempt being chased
+      // across runs, not two, and its window starts at the first intent.
+      const open = new Map<string, UnresolvedAttempt>();
+      const settled = new Set<string>();
+      for (const entry of entries) {
+        if (entry.mode !== "live") continue;
+        if (entry.type === "intent") {
+          if (entry.action !== "proceed" || typeof entry.approvedUsdc !== "number") continue;
+          if (typeof entry.idempotencyKey !== "string" || entry.idempotencyKey === "") continue;
+          if (open.has(entry.idempotencyKey)) continue;
+          open.set(entry.idempotencyKey, {
+            invoiceId: entry.invoiceId,
+            to: entry.to,
+            amountUsdc: entry.approvedUsdc,
+            idempotencyKey: entry.idempotencyKey,
+            intentAt: entry.at,
+          });
+          continue;
+        }
+        if (typeof entry.idempotencyKey !== "string" || entry.idempotencyKey === "") continue;
+        if (entry.type === "result") {
+          // submitted and failed are terminal answers. unknown is the
+          // whole reason this list exists, so it settles nothing.
+          if (entry.state === "submitted" || entry.state === "failed") settled.add(entry.idempotencyKey);
+          continue;
+        }
+        if (entry.outcome === "confirmed" || entry.outcome === "failed") settled.add(entry.idempotencyKey);
+      }
+      return [...open.entries()].filter(([key]) => !settled.has(key)).map(([, attempt]) => attempt);
+    },
+    async confirmedLivePayments() {
+      const entries = await readEntries(path);
+      const confirmed: ConfirmedPayment[] = [];
+      for (const entry of entries) {
+        if (entry.mode !== "live" || entry.type !== "resolution") continue;
+        if (entry.outcome !== "confirmed") continue;
+        confirmed.push({
+          invoiceId: entry.invoiceId,
+          to: entry.to,
+          amountUsdc: entry.amountUsdc,
+          at: entry.at,
+          transactionId: entry.transactionId,
+        });
+      }
+      return confirmed;
     },
   };
 }

@@ -17,18 +17,25 @@
  * Live runs take an exclusive lock next to the audit log before reading
  * anything, because the duplicate guard and the key reuse read the log and
  * then write it.
+ *
+ * The `resume` subcommand is the read-only counterpart: it settles live
+ * attempts that never got a terminal answer by listing the agent wallet's
+ * outbound transfers, writes one resolution line each and transfers
+ * nothing. It takes the same lock and exits 4 while any attempt is still
+ * unresolved. Without a subcommand nothing about a run changes.
  */
 import { randomBytes } from "node:crypto";
 import { dirname, relative, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { LiveLockError, acquireLiveLock, createAuditLog, releaseLockQuietly } from "./audit";
-import { createCircleCliExecutor, createDryRunExecutor } from "./circle";
+import { createCircleCliExecutor, createCircleCliReconciler, createDryRunExecutor } from "./circle";
 import { ConfigError, USAGE, loadDotEnv, parseFlags, resolveConfig } from "./config";
 import { GateInterruptedError, runGate } from "./gate";
 import { KYRO_BASE_URL, createKyroGateway } from "./kyro";
 import { TaskFileError, loadTaskList, plan } from "./planners/scripted";
 import { renderHeader, renderSummary } from "./render";
+import { runResume } from "./resume";
 import { CHAIN } from "./types";
 
 const PACKAGE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -65,13 +72,40 @@ async function main(): Promise<number> {
   loadDotEnv(PACKAGE_DIR, process.env);
   const config = resolveConfig(flags, process.env, PACKAGE_DIR);
 
-  const lock = config.mode === "live" ? await acquireLiveLock(config.auditLogPath) : undefined;
+  // resume reads the log and then appends to it, the same read-then-write
+  // the duplicate guard does, so it takes the same lock.
+  const needsLock = config.mode === "live" || config.command === "resume";
+  const lock = needsLock ? await acquireLiveLock(config.auditLogPath) : undefined;
   try {
-    return await run(config);
+    return config.command === "resume" ? await resume(config) : await run(config);
   } finally {
     // A failed cleanup must not turn an exit 4 or a GateInterruptedError into exit 1.
     if (lock !== undefined) await releaseLockQuietly(lock, (line) => process.stderr.write(`${line}\n`));
   }
+}
+
+/**
+ * The read-only half: no planner, no Kyro read, no transfer. It lists the
+ * agent wallet's outbound transfers once and records what each unresolved
+ * attempt turned out to be. Exit 4 while anything is still unresolved.
+ */
+async function resume(config: ReturnType<typeof resolveConfig>): Promise<number> {
+  const agentWallet = config.agentWallet;
+  if (agentWallet === undefined) {
+    throw new ConfigError("resume needs AGENT_WALLET_ADDRESS");
+  }
+  const result = await runResume({
+    audit: createAuditLog(config.auditLogPath),
+    reconciler: createCircleCliReconciler({ bin: config.circleBin, timeoutMs: config.circleTimeoutMs }),
+    out,
+    now: () => new Date(),
+    runId: newRunId(),
+    agentWallet,
+    circleBin: config.circleBin,
+    circleTimeoutMs: config.circleTimeoutMs,
+    auditPath: displayPath(config.auditLogPath),
+  });
+  return result.stillUnknown > 0 ? 4 : 0;
 }
 
 async function run(config: ReturnType<typeof resolveConfig>): Promise<number> {

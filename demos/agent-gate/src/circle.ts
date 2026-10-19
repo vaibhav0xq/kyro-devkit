@@ -482,3 +482,26 @@ export function createCircleCliExecutor(options: CircleCliExecutorOptions): Exec
     },
   };
 }
+
+/**
+ * Reads the agent wallet's outbound transfers. This is the only other
+ * command the demo ever runs, it moves nothing, and `resume` is its only
+ * caller. The raw answer is returned unread so `interpretReconcileOutput`
+ * stays pure and the spawn stays in one place.
+ */
+export interface Reconciler {
+  list(agentWallet: string, hooks?: TransferHooks): Promise<{ argv: string[]; outcome: CliOutcome }>;
+}
+
+export function createCircleCliReconciler(options: CircleCliExecutorOptions): Reconciler {
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
+    throw new RangeError(`CIRCLE_TIMEOUT_MS must be a positive number of milliseconds, got ${String(options.timeoutMs)}`);
+  }
+  return {
+    async list(agentWallet: string, hooks?: TransferHooks) {
+      const argv = buildReconcileArgv(agentWallet);
+      hooks?.onSpawn?.(argv);
+      return { argv, outcome: await runCli(options, argv) };
+    },
+  };
+}

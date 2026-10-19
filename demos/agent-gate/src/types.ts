@@ -94,6 +94,7 @@ export type ConditionCode =
   | "OVER_TRANSFER_CAP"
   | "RUN_BUDGET_EXCEEDED"
   | "DUPLICATE_RECENT"
+  | "PAYMENT_ALREADY_CONFIRMED"
   | "RECEIPT_MISMATCH"
   | "RECEIPT_UNAVAILABLE";
 
@@ -122,6 +123,22 @@ export interface RecentPayment {
   at: string;
 }
 
+/**
+ * A payment a reconcile proved went through: the exact invoice, recipient
+ * and amount, plus the provider transaction that settled it. Unlike a
+ * RecentPayment this carries no window. Once a payment is known to have
+ * completed it stays known, and the gate must not send it again however
+ * long ago it was.
+ */
+export interface ConfirmedPayment {
+  invoiceId: string;
+  to: string;
+  amountUsdc: number;
+  /** When the reconcile recorded it. */
+  at: string;
+  transactionId: string | null;
+}
+
 export interface PolicyInput {
   proposal: Proposal;
   /** Undefined when the proposal never reached Kyro (pre-screen refused it). */
@@ -129,6 +146,11 @@ export interface PolicyInput {
   caps: Caps;
   spentUsdcThisRun: number;
   recentPayments: RecentPayment[];
+  /**
+   * Payments a reconcile confirmed, from the audit log. Defaults to none,
+   * so a log written before resume existed decides exactly as it did then.
+   */
+  confirmedPayments?: ConfirmedPayment[];
   now: Date;
   /** The paying wallet, when known. Paying yourself is refused. */
   agentWallet?: string;

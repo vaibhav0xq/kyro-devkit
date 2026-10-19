@@ -206,6 +206,7 @@ export async function runGate(deps: GateDeps, proposals: Proposal[]): Promise<Ga
       const policy = decide({
         proposal,
         assessment,
+        confirmedPayments: await deps.audit.confirmedLivePayments(),
         caps: deps.caps,
         spentUsdcThisRun: approvedUsdc,
         recentPayments,
